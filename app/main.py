@@ -6,15 +6,19 @@ import argparse
 import asyncio
 import logging
 import logging.handlers
+import os
 import signal
 import sqlite3
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import BASE_DIR, Config, ConfigError, load_config
+from app.control import DEFAULT_CONTROL_PATH
 from app.kufar import KufarClient
 from app.notifier import Notifier
 from app.scheduler import Scheduler
+from app.status import DEFAULT_STATUS_PATH
 from app.storage import Storage
 
 LOG_DIR = BASE_DIR / "logs"
@@ -115,7 +119,16 @@ def create_components(config: Config) -> tuple[Scheduler, Notifier, KufarClient]
     kufar = KufarClient(
         timeout=config.limits.request_timeout, proxy_url=config.proxy_url
     )
-    scheduler = Scheduler(config, kufar, storage, notifier)
+    control_path = Path(os.getenv("CONTROL_PATH") or DEFAULT_CONTROL_PATH)
+    status_path = Path(os.getenv("STATUS_PATH") or DEFAULT_STATUS_PATH)
+    scheduler = Scheduler(
+        config,
+        kufar,
+        storage,
+        notifier,
+        control_path=control_path,
+        status_path=status_path,
+    )
     return scheduler, notifier, kufar
 
 

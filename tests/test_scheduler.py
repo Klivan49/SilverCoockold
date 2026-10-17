@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.config import Config, LimitsConfig, QueryConfig
+from app.control import ControlState, write_control
 from app.kufar import KufarError
 from app.models import Ad
 from app.scheduler import (
@@ -20,6 +21,7 @@ from app.scheduler import (
     is_older_than,
     search_url,
 )
+from app.status import read_status
 from app.storage import Storage
 
 
@@ -56,6 +58,19 @@ class FakeNotifier:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeSleep:
+    """Подделка SleepInhibitor: запоминает вызовы."""
+
+    def __init__(self) -> None:
+        self.values: list[bool] = []
+
+    def set_prevent_sleep(self, enabled: bool) -> None:
+        self.values.append(enabled)
+
+    def close(self) -> None:
+        self.values.append(False)
 
 
 def make_query(
@@ -108,8 +123,17 @@ def make_scheduler(
     kufar: FakeKufar,
     notifier: FakeNotifier,
 ) -> Scheduler:
-    """Собрать планировщик на подделках."""
-    return Scheduler(config, kufar, storage, notifier)  # type: ignore[arg-type]
+    """Собрать планировщик на подделках с control/status рядом с тестовой БД."""
+    base = storage.db_path.parent
+    return Scheduler(  # type: ignore[arg-type]
+        config,
+        kufar,
+        storage,
+        notifier,
+        control_path=base / "control.json",
+        status_path=base / "status.json",
+        sleep_inhibitor=FakeSleep(),
+    )
 
 
 @pytest.mark.parametrize("notify", [True, False])
@@ -307,5 +331,51 @@ def test_start_and_stop_cancel_tasks(tmp_path: Path) -> None:
 
     tasks = asyncio.run(scenario())
 
-    assert len(tasks) == 1
-    assert tasks[0].cancelled() is True
+    query_tasks = [task for task in tasks if task.get_name().startswith("query:")]
+    assert len(query_tasks) == 1
+    assert all(task.cancelled() is True for task in tasks)
+
+
+def test_tracking_false_pauses_and_resumes(tmp_path: Path) -> None:
+    """tracking=false не делает fetch; включение подхватывается за секунду."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    control_path = tmp_path / "control.json"
+    status_path = tmp_path / "status.json"
+    write_control(control_path, ControlState(tracking=False, prevent_sleep=False))
+    kufar = FakeKufar({query.q: [make_ad("1")]})
+    notifier = FakeNotifier()
+    scheduler = Scheduler(  # type: ignore[arg-type]
+        make_config([query]),
+        kufar,
+        storage,
+        notifier,
+        control_path=control_path,
+        status_path=status_path,
+        sleep_inhibitor=FakeSleep(),
+    )
+
+    async def scenario() -> tuple[list[str], list[str], dict | None]:
+        tasks = scheduler.start()
+        await asyncio.sleep(1.2)
+        calls_before = list(kufar.calls)
+
+        write_control(control_path, ControlState(tracking=True, prevent_sleep=False))
+        for _ in range(40):
+            await asyncio.sleep(0.1)
+            if kufar.calls:
+                break
+        await asyncio.sleep(0.2)
+        calls_after = list(kufar.calls)
+        status = read_status(status_path)
+        await scheduler.stop(tasks)
+        return calls_before, calls_after, status
+
+    before, after, status = asyncio.run(scenario())
+
+    assert before == []
+    assert len(after) == 1
+    assert len(notifier.ad_calls) == 1
+    assert status is not None
+    assert status["tracking"] is True

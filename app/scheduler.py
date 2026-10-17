@@ -9,12 +9,16 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from app.config import Config, QueryConfig
+from app.control import DEFAULT_CONTROL_PATH, ControlState, read_control, write_control
 from app.kufar import KufarClient, KufarError
 from app.models import Ad
 from app.notifier import Notifier
+from app.sleep import SleepInhibitor
+from app.status import DEFAULT_STATUS_PATH, write_status
 from app.storage import Storage, utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -68,12 +72,30 @@ class Scheduler:
         kufar: KufarClient,
         storage: Storage,
         notifier: Notifier,
+        control_path: str | Path | None = None,
+        status_path: str | Path | None = None,
+        sleep_inhibitor: SleepInhibitor | None = None,
     ) -> None:
         self.config = config
         self.kufar = kufar
         self.storage = storage
         self.notifier = notifier
+        self.control_path = Path(control_path or DEFAULT_CONTROL_PATH)
+        self.status_path = Path(status_path or DEFAULT_STATUS_PATH)
+        self.sleep = sleep_inhibitor or SleepInhibitor()
         self._http_lock = asyncio.Lock()
+        self._wake = asyncio.Event()
+        self._ensure_control_file()
+        state = read_control(self.control_path)
+        self.tracking = state.tracking
+        self.prevent_sleep = state.prevent_sleep
+
+    def _ensure_control_file(self) -> None:
+        """Создать control.json с настройками по умолчанию, если файла нет."""
+        if self.control_path.exists():
+            return
+        write_control(self.control_path, ControlState())
+        logger.info("Создан %s с настройками по умолчанию", self.control_path)
 
     async def _fetch(self, query: str) -> list[Ad]:
         """Сделать HTTP-запрос последовательно с остальными задачами."""
@@ -82,6 +104,10 @@ class Scheduler:
 
     async def run_pass(self, query: QueryConfig) -> PassResult:
         """Выполнить один проход по запросу и вернуть статистику."""
+        if not self.tracking:
+            logger.info("Отслеживание выключено: проход «%s» пропущен", query.q)
+            return PassResult()
+
         started = time.monotonic()
         try:
             if self.storage.is_bootstrapped(query.q):
@@ -105,11 +131,15 @@ class Scheduler:
             result.sent,
             duration_ms,
         )
+        self._write_status()
         return result
 
     async def _bootstrap_pass(self, query: QueryConfig) -> PassResult:
         """Первый проход: сохранить всё, ничего не присылать, кроме сводки."""
         ads = await self._fetch(query.q)
+        if not self.tracking:
+            logger.info("Отслеживание выключено во время запроса «%s»", query.q)
+            return PassResult()
         new_count = 0
         for ad in ads:
             if self.storage.is_new(ad.ad_id):
@@ -129,6 +159,9 @@ class Scheduler:
     async def _regular_pass(self, query: QueryConfig) -> PassResult:
         """Обычный проход: сохранить новое и отправить уведомления."""
         ads = await self._fetch(query.q)
+        if not self.tracking:
+            logger.info("Отслеживание выключено во время запроса «%s»", query.q)
+            return PassResult()
         new_count = 0
         sent = 0
         skipped = 0
@@ -193,28 +226,84 @@ class Scheduler:
         self.storage.set_meta(LAST_429_NOTICE_KEY, now.isoformat())
 
     def start(self) -> list[asyncio.Task[None]]:
-        """Запустить по задаче на каждый запрос из конфига."""
+        """Запустить циклы запросов, наблюдатель и писателя статуса."""
+        if self.prevent_sleep:
+            self.sleep.set_prevent_sleep(True)
         tasks = [
             asyncio.create_task(self._query_loop(query), name=f"query:{query.q}")
             for query in self.config.queries
         ]
+        tasks.append(asyncio.create_task(self._control_watcher(), name="control"))
+        tasks.append(asyncio.create_task(self._status_writer(), name="status"))
         logger.info("Планировщик запущен: задач %d", len(tasks))
         return tasks
 
     async def stop(self, tasks: list[asyncio.Task[None]]) -> None:
-        """Отменить задачи и дождаться их завершения."""
+        """Отменить задачи, снять запрет сна и записать running=false."""
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        self.sleep.close()
+        self._write_status(running=False)
         logger.info("Планировщик остановлен")
+
+    async def _control_watcher(self) -> None:
+        """Раз в секунду применять control.json без перезапуска демона."""
+        while True:
+            state = read_control(self.control_path)
+            if state.tracking != self.tracking:
+                self.tracking = state.tracking
+                logger.info(
+                    "Отслеживание %s", "включено" if state.tracking else "выключено"
+                )
+                self._wake.set()
+            if state.prevent_sleep != self.prevent_sleep:
+                self.prevent_sleep = state.prevent_sleep
+                logger.info(
+                    "Режим сна %s",
+                    "запрещён" if state.prevent_sleep else "разрешён",
+                )
+                self.sleep.set_prevent_sleep(state.prevent_sleep)
+            await asyncio.sleep(1.0)
+
+    async def _status_writer(self) -> None:
+        """Обновлять status.json раз в 5 секунд."""
+        while True:
+            self._write_status()
+            await asyncio.sleep(5.0)
+
+    def _write_status(self, running: bool = True) -> None:
+        """Записать status.json, не роняя демон при ошибке БД/диска."""
+        try:
+            stats = self.storage.stats()
+            write_status(
+                self.status_path,
+                running=running,
+                tracking=self.tracking,
+                prevent_sleep=self.prevent_sleep,
+                ads_total=int(stats["ads_total"]),
+                last_poll=dict(stats["last_poll"]),
+            )
+        except Exception:
+            logger.exception("Не удалось записать status.json")
 
     async def _query_loop(self, query: QueryConfig) -> None:
         """Бесконечный цикл опроса одного запроса с джиттером."""
         while True:
+            if not self.tracking:
+                await self._wake.wait()
+                self._wake.clear()
+                continue
+
             result = await self.run_pass(query)
             if result.paused:
                 delay = float(KUFAR_PAUSE_SECONDS)
             else:
                 delay = interval_with_jitter(query.interval)
             logger.info("«%s»: следующий опрос через %.1f с", query.q, delay)
-            await asyncio.sleep(delay)
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                self._wake.clear()
