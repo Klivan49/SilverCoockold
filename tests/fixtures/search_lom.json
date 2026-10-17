@@ -1,0 +1,1725 @@
+{
+ "ads": [
+  {
+   "account_id": "O1Vn8WSUyQd-dsvox3i_MI0",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Максим.При покупке 3-х вещей СКИДКА",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1089730241,
+   "ad_link": "https://www.kufar.by/item/1089730241",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Коллекционирование",
+     "p": "category",
+     "v": 4170,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Заводской",
+     "p": "area",
+     "v": "26",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип",
+     "vl": "Монеты",
+     "p": "collections_type",
+     "v": "1",
+     "pu": "clt"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "830",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "740",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "2499",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "69343",
+     "price_per_meter": null
+    }
+   ],
+   "category": "4170",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/9468d455-e1d5-4b29-9933-cc58c9cedd5d.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/18ebf9b0-1fe3-4794-9ed5-edcfc8045636.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/b4f66b7e-233d-45ee-bb21-511720d779f1.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/2bab31c8-eefb-4a65-893d-a31f5d774275.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/ef3c6321-e5a5-4284-a698-9dc62e5928d9.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1089730241,
+   "list_time": "2026-10-17T07:02:04Z",
+   "message_id": "adid1089730241",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": true,
+   "price_byn": "2499",
+   "price_usd": "830",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "монеты серебро",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "OypyL6s5PhBAEmZ39gr0dGI",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Пользователь Я",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1089694263,
+   "ad_link": "https://www.kufar.by/item/1089694263",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Женские аксессуары",
+     "p": "category",
+     "v": 8020,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Брестская область",
+     "p": "region",
+     "v": 1,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Барановичи",
+     "p": "area",
+     "v": "37",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "Да",
+     "p": "safedeal_enabled",
+     "v": true,
+     "pu": "sde"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "1329",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "1185",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "4000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "110994",
+     "price_per_meter": null
+    }
+   ],
+   "category": "8020",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/30ce78f4-1f03-4c01-a435-e4c97068af41.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/4daf7f8f-6307-477d-922f-32b8f382c100.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/aa70ee0e-10ce-427e-83da-879f97625275.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/e304c44f-3941-45a8-aa61-ad92abdf4de2.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1089694263,
+   "list_time": "2026-10-16T19:21:53Z",
+   "message_id": "adid1089694263",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "4000",
+   "price_usd": "1329",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Аксессуары новые и б/у",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O-5B_d4GIa_M_cWbYAclO4U",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Элла",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1089663156,
+   "ad_link": "https://www.kufar.by/item/1089663156",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Женские аксессуары",
+     "p": "category",
+     "v": 8020,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Первомайский",
+     "p": "area",
+     "v": "24",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Цвет",
+     "vl": [
+      "Серебристый"
+     ],
+     "p": "women_goods_color",
+     "v": [
+      75
+     ],
+     "pu": "wcl"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "0",
+     "price_per_meter": null
+    }
+   ],
+   "category": "8020",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/0f0bdf66-3525-48e6-8856-773a4fa4c686.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/3450fb7f-9168-4046-a3ec-25db54e4e1ff.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/66269712-0561-4695-a088-21f49b4055d0.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/3ec5aa47-ce69-4ce4-8d94-c451a23e5e22.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/ba813f31-dc13-4677-a032-ce03096a2121.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/4526bbbc-248d-4c8d-a4c0-f05abbc67ee5.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/ce364698-d15e-4f56-89ef-39553188ddad.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1089663156,
+   "list_time": "2026-10-16T17:26:30Z",
+   "message_id": "adid1089663156",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "0",
+   "price_usd": "0",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Серебро цепочки, браслет, кольца, крестики, серьги",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "Ox125h9kWCccKM4euhVGqPo",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Пользователь",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1088895741,
+   "ad_link": "https://www.kufar.by/item/1088895741",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Мужские аксессуары",
+     "p": "category",
+     "v": 19030,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Центральный",
+     "p": "area",
+     "v": "22",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Цвет",
+     "vl": [
+      "Серебристый"
+     ],
+     "p": "women_goods_color",
+     "v": [
+      75
+     ],
+     "pu": "wcl"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "-",
+     "p": "delivery_enabled",
+     "v": false,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "-",
+     "p": "safedeal_enabled",
+     "v": false,
+     "pu": "sde"
+    },
+    {
+     "pl": "Возможен обмен",
+     "vl": "Да",
+     "p": "possible_exchange",
+     "v": true,
+     "pu": "pse"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "0",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "0",
+     "price_per_meter": null
+    }
+   ],
+   "category": "19030",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/fdb8f1ce-e7e6-4424-9b22-a0d014e82f1e.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1088895741,
+   "list_time": "2026-10-16T03:26:01Z",
+   "message_id": "adid1088895741",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": true,
+   "price_byn": "0",
+   "price_usd": "0",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Мужские серебряные браслеты из серебра 925.",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "Ox125h9kWCccKM4euhVGqPo",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Пользователь",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1071015279,
+   "ad_link": "https://www.kufar.by/item/1071015279",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Мужские аксессуары",
+     "p": "category",
+     "v": 19030,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Центральный",
+     "p": "area",
+     "v": "22",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Часы",
+     "p": "accessories",
+     "v": "1",
+     "pu": "ac"
+    },
+    {
+     "pl": "Бренд",
+     "vl": "Orient",
+     "p": "women_clothes_brand",
+     "v": "750",
+     "pu": "brnd"
+    },
+    {
+     "pl": "Цвет",
+     "vl": [
+      "Золотой"
+     ],
+     "p": "women_goods_color",
+     "v": [
+      35
+     ],
+     "pu": "wcl"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "-",
+     "p": "safedeal_enabled",
+     "v": false,
+     "pu": "sde"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "24924",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "22223",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "75000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "2081137",
+     "price_per_meter": null
+    }
+   ],
+   "category": "19030",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/6e133e20-4d0d-406c-8d9b-f7b473250af6.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/2c342934-05cc-478d-a6d2-4cf4b33b3cfd.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/06284f86-f0f7-4f12-9b97-36efbf394e13.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/09efc5b9-409c-4796-abf4-0ec6ff4fc5c4.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/cce9b9ea-c48e-46ad-8451-41cf3c011fdd.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/48285323-32be-40db-9c19-afc66fafa83a.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/ff25d47f-3c4d-4c48-b650-50f16943a9ca.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/b51281da-6833-4ed9-a549-7aa75cb1446a.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/0e5f0265-45c8-4781-9f36-b8a54c4d0db3.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1071015279,
+   "list_time": "2026-10-15T18:14:51Z",
+   "message_id": "adid1071015279",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "75000",
+   "price_usd": "24924",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Часы мужские наручные Orient золотые.",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O_FtXh2VtQl5Wt13_ZXw3Ow",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Пользователь",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1089320794,
+   "ad_link": "https://www.kufar.by/item/1089320794",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Мужские аксессуары",
+     "p": "category",
+     "v": 19030,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Брестская область",
+     "p": "region",
+     "v": 1,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Брест",
+     "p": "area",
+     "v": "1",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "Да",
+     "p": "safedeal_enabled",
+     "v": true,
+     "pu": "sde"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "24924",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "22223",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "75000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "2081137",
+     "price_per_meter": null
+    }
+   ],
+   "category": "19030",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/873d7b60-465d-42d1-a156-c052a4fa9baa.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/bd85d840-6b30-42e0-a832-ad255e915e65.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1089320794,
+   "list_time": "2026-10-14T13:49:40Z",
+   "message_id": "adid1089320794",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "75000",
+   "price_usd": "24924",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "цепочка мужская серебро 925",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O0mFoADBuUjab-L-Q_EB3GE",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Антон",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1089270301,
+   "ad_link": "https://www.kufar.by/item/1089270301",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Женские аксессуары",
+     "p": "category",
+     "v": 8020,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Брестская область",
+     "p": "region",
+     "v": 1,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Брест",
+     "p": "area",
+     "v": "1",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "-",
+     "p": "safedeal_enabled",
+     "v": false,
+     "pu": "sde"
+    },
+    {
+     "pl": "Возможен обмен",
+     "vl": "Да",
+     "p": "possible_exchange",
+     "v": true,
+     "pu": "pse"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "18943",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "16889",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "57000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "1581664",
+     "price_per_meter": null
+    }
+   ],
+   "category": "8020",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/e75a1ecd-5970-4c50-af1c-9cf0d5775ea1.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/6dc717ec-1b2c-4a3c-9382-f543785e5f06.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1089270301,
+   "list_time": "2026-10-14T10:52:57Z",
+   "message_id": "adid1089270301",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": true,
+   "price_byn": "57000",
+   "price_usd": "18943",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Серебро изделия",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O4nclrFOU-X4PTsVZECL9Gw",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "МОРЕ",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1080353256,
+   "ad_link": "https://www.kufar.by/item/1080353256",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Коллекционирование",
+     "p": "category",
+     "v": 4170,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Витебская область",
+     "p": "region",
+     "v": 6,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Витебск",
+     "p": "area",
+     "v": "18",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип",
+     "vl": "Другое",
+     "p": "collections_type",
+     "v": "12",
+     "pu": "clt"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "99698",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "88892",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "300000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "8324546",
+     "price_per_meter": null
+    }
+   ],
+   "category": "4170",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/9e58580e-e310-45e0-9088-43d4ed99ba9e.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/e732076e-c757-4a69-a672-db3f10fb568c.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/f8319fd7-57b7-4343-9dc6-da3d69f56f2d.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/30c1629f-f6f8-43e7-a992-9f54fd0e4fc8.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/e883fe2b-ef82-4c07-928a-c9d678fd6c4e.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/c9b28bda-1280-4792-b513-de721964b555.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/19684370-7542-4cbc-bf34-71e97c5eea0f.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/baa1e779-086d-4e3b-95d5-d86806413402.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/5bada48b-8508-46da-ad5d-58545aa9f978.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1080353256,
+   "list_time": "2026-10-12T12:34:01Z",
+   "message_id": "adid1080353256",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": true,
+   "price_byn": "300000",
+   "price_usd": "99698",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "СРОЧНО Благовонницы БЕСАМИМ АВДАЛА 1873г СЕРЕБРО",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O-Ui_kVkCsQyb0OKhZmhPu8",
+   "account_parameters": [
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "Alex",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 1085511302,
+   "ad_link": "https://www.kufar.by/item/1085511302",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Электроснабжение",
+     "p": "category",
+     "v": 14100,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Московский",
+     "p": "area",
+     "v": "29",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип",
+     "vl": "Электрооборудование и приборы",
+     "p": "repair_electrical_type",
+     "v": "25",
+     "pu": "ret"
+    },
+    {
+     "pl": "Вид",
+     "vl": "Прочее",
+     "p": "repair_electrical_device",
+     "v": "40",
+     "pu": "redv"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Б/у",
+     "p": "condition",
+     "v": "1",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "Да",
+     "p": "delivery_enabled",
+     "v": true,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "Да",
+     "p": "safedeal_enabled",
+     "v": true,
+     "pu": "sde"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "2326",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "2074",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "7000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "194239",
+     "price_per_meter": null
+    }
+   ],
+   "category": "14100",
+   "company_ad": false,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/7e4d06ba-6c05-40cb-8886-5f639ff9bf73.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/8cd02a08-de51-4ed6-8f38-9143b7e5b927.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/93816ff3-eca7-43ff-8e75-f88d949c5653.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/2651b522-5201-4d4b-8ce4-89b09000308c.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/16c27d76-c224-4f00-914c-a22cba7d67cc.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/624dda0d-dd5f-456f-abb2-9a821fd444ef.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/3f2c5617-f76a-480b-8a0a-66eb276e44d0.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/3b39244c-ce50-4505-be35-58f6b4b39c84.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/4ccd0879-ea57-4daa-8808-81f46e179655.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 1085511302,
+   "list_time": "2026-10-11T08:43:22Z",
+   "message_id": "adid1085511302",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "7000",
+   "price_usd": "2326",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Лифтовая плата управления ПУ-1 ПКЛ-32 на запчасти",
+   "travel": null,
+   "type": "sell"
+  },
+  {
+   "account_id": "O9cyBUl3HbEpit1R7ZK4kXw",
+   "account_parameters": [
+    {
+     "pl": "УНП",
+     "vl": "",
+     "p": "vat_number",
+     "v": "691741907",
+     "pu": "vn"
+    },
+    {
+     "pl": "Контактное лицо",
+     "vl": "",
+     "p": "contact_person",
+     "v": "Александр",
+     "pu": "cp"
+    },
+    {
+     "pl": "Адрес торговой точки",
+     "vl": "",
+     "p": "shop_address",
+     "v": "Независимости пр, 179, Минск, 90Старовиленская ул, 131, Минск, 90Рафиева ул, 64, Минск, 1",
+     "pu": "sa"
+    },
+    {
+     "pl": "Данные о лицензии",
+     "vl": "",
+     "p": "company_number",
+     "v": "№02200/17-01205 от 18.06.2014г. сроком на 10 лет Министерство финансов РБ",
+     "pu": "cn"
+    },
+    {
+     "pl": "Юридический адрес/Адрес регистрации",
+     "vl": "",
+     "p": "company_address",
+     "v": "Минская обл., г. Смолевичи, ул.Связистов 1/1",
+     "pu": "ca"
+    },
+    {
+     "pl": "Ссылка на интернет-магазин",
+     "vl": "",
+     "p": "web_shop_link",
+     "v": "https://jstudio.by/",
+     "pu": "wsl"
+    },
+    {
+     "pl": "Имя",
+     "vl": "",
+     "p": "name",
+     "v": "ООО ''Джей студио''",
+     "pu": "nme"
+    }
+   ],
+   "ad_id": 220170025,
+   "ad_link": "https://www.kufar.by/item/220170025",
+   "ad_parameters": [
+    {
+     "pl": "Категория",
+     "vl": "Женские аксессуары",
+     "p": "category",
+     "v": 8020,
+     "pu": "cat"
+    },
+    {
+     "pl": "Регион",
+     "vl": "Минск",
+     "p": "region",
+     "v": 7,
+     "pu": "rgn"
+    },
+    {
+     "pl": "Город / Район",
+     "vl": "Первомайский",
+     "p": "area",
+     "v": "24",
+     "pu": "ar"
+    },
+    {
+     "pl": "Тип оплаты",
+     "vl": "Цена",
+     "p": "remuneration_type",
+     "v": "1",
+     "pu": "rtr"
+    },
+    {
+     "pl": "Тип аксессуара",
+     "vl": "Украшения",
+     "p": "accessories",
+     "v": "2",
+     "pu": "ac"
+    },
+    {
+     "pl": "Бренд",
+     "vl": "Белорусские дизайнеры",
+     "p": "women_clothes_brand",
+     "v": "1145",
+     "pu": "brnd"
+    },
+    {
+     "pl": "Ручная работа",
+     "vl": "Да",
+     "p": "women_accessories_handmade",
+     "v": true,
+     "pu": "whm"
+    },
+    {
+     "pl": "Состояние",
+     "vl": "Новое",
+     "p": "condition",
+     "v": "2",
+     "pu": "cnd"
+    },
+    {
+     "pl": "Товары с Куфар Доставкой",
+     "vl": "-",
+     "p": "delivery_enabled",
+     "v": false,
+     "pu": "dle"
+    },
+    {
+     "pl": "Товары с Куфар Оплатой",
+     "vl": "-",
+     "p": "safedeal_enabled",
+     "v": false,
+     "pu": "sde"
+    },
+    {
+     "pl": "Ключевые слова",
+     "vl": "",
+     "p": "users_synonyms",
+     "v": "Ювелирная мастерская, золото, серебро, переплавка, изготовление на заказ",
+     "pu": "usn"
+    },
+    {
+     "pl": "Компания",
+     "vl": "",
+     "p": "trademark",
+     "v": "Jstudio",
+     "pu": "trd"
+    }
+   ],
+   "body": null,
+   "body_short": null,
+   "calculator": [
+    {
+     "currency": "USD",
+     "price": "18278",
+     "price_per_meter": null
+    },
+    {
+     "currency": "EUR",
+     "price": "16297",
+     "price_per_meter": null
+    },
+    {
+     "currency": "BYN",
+     "price": "55000",
+     "price_per_meter": null
+    },
+    {
+     "currency": "RUB",
+     "price": "1526167",
+     "price_per_meter": null
+    }
+   ],
+   "category": "8020",
+   "company_ad": true,
+   "currency": "BYR",
+   "feedback_info": null,
+   "images": [
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/ee4cbe77-6679-4610-bf20-bdfd2701f13b.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/fa88b028-d988-4515-8017-4730f2bc801e.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/3138cd6a-bc40-4f1d-9c6a-f690b3b6cb7f.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/d5126765-6bed-4375-84b2-997b4ecfbebd.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/95931f38-2b2b-403e-9a72-d015892f5752.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/7b6e65cd-d96a-4ce8-97a0-838b07c63088.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/79532fb4-5b51-4a4d-a234-74f2a510f6d2.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/cc7fa594-c34a-41c2-adaf-30cb79b42243.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/cdf2f84c-c631-4a9d-bdf0-afc4302900e0.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/cb2c832b-aed5-43c8-a45d-d4d468fc668d.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/6deb39ea-a878-40c1-a341-1a4fc5ac92c2.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/820c1549-9806-4af1-99f1-3742ebd07e63.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/a9b781a4-dfb1-4e37-a4ed-f3df82730fdc.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/0db3d68f-0122-46cc-b30d-8543e12a6904.jpg",
+     "yams_storage": false
+    },
+    {
+     "id": "0000",
+     "media_storage": "rms",
+     "path": "adim1/c497f9fb-376d-4e62-b474-d28ad15026ad.jpg",
+     "yams_storage": false
+    }
+   ],
+   "is_mine": false,
+   "list_id": 220170025,
+   "list_time": "2026-10-10T12:51:17Z",
+   "message_id": "adid220170025",
+   "paid_services": {
+    "halva": false,
+    "highlight": false,
+    "polepos": false,
+    "ribbons": null
+   },
+   "phone_hidden": false,
+   "price_byn": "55000",
+   "price_usd": "18278",
+   "remuneration_type": "1",
+   "show_parameters": {
+    "show_call": false,
+    "show_chat": false,
+    "show_import_link": false,
+    "show_web_shop_link": false
+   },
+   "subject": "Помолвочные кольца на заказ",
+   "travel": null,
+   "type": "sell"
+  }
+ ],
+ "page_type": "search_page",
+ "pagination": {
+  "pages": [
+   {
+    "label": "self",
+    "num": 1,
+    "token": null
+   }
+  ]
+ },
+ "total": 36
+}
