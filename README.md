@@ -2,9 +2,9 @@
 
 Локальный мониторинг серебра на Kufar с мгновенными уведомлениями в Telegram.
 
-Бот следит за новыми объявлениями по запросам **«серебро лом»** и **«серебро лот»** и присылает их без скоринга и AI-проверок: появилось новое объявление — сразу уведомление. Остальные запросы («серебро», «серебряное», «серебро 925») пока просто складываются в базу для будущего анализа.
+Бот опрашивает ровно четыре запроса из `config.yaml`. Приоритетные **«серебро лом»** и **«серебро лот»** присылаются в Telegram без скоринга и AI-проверок: появилось новое объявление — сразу уведомление. Обычные **«серебро»** и **«серебряное»** пока просто складываются в базу для будущего анализа.
 
-> Статус: спецификация и подготовка к разработке. Код будет добавлен по шагам из раздела «Дорожная карта».
+> Статус: MVP собран и работает локально; Docker и systemd подготовлены, runtime-проверка Docker — на VPS.
 
 ---
 
@@ -13,7 +13,7 @@
 - Опрос Kufar каждые 15 секунд по приоритетным запросам.
 - Мгновенное уведомление в Telegram по каждому новому объявлению из приоритетных запросов.
 - Дедупликация по `ad_id` — никаких повторов после перезапуска.
-- Bootstrap: при первом запуске старые объявления не спамят, приходит одно сводное сообщение.
+- Bootstrap: при первом запуске старые объявления не спамят — приходит одна сводка на каждый запрос.
 - Устойчивость к `429`: последовательные запросы, джиттер, backoff.
 - SQLite — вся история и состояние в одном файле.
 - `DRY_RUN` — проверка без Telegram-токена.
@@ -64,6 +64,7 @@ config.yaml ─┐
 SilverCoockold/
 ├── app/
 │   ├── __init__.py
+│   ├── __main__.py       # запуск python -m app
 │   ├── main.py           # CLI: --check, --once, --daemon
 │   ├── config.py         # загрузка config.yaml + .env
 │   ├── models.py         # dataclass Ad
@@ -74,13 +75,20 @@ SilverCoockold/
 │   └── analyzers/
 │       ├── base.py       # Protocol Analyzer
 │       └── null.py       # заглушка
+├── deploy/
+│   └── silverwatch.service
+├── scripts/
+│   └── fetch_fixture.py
 ├── tests/
 │   ├── fixtures/search_lom.json
 │   ├── test_kufar.py
-│   └── test_storage.py
+│   ├── test_storage.py
+│   ├── test_notifier.py
+│   └── test_scheduler.py
 ├── config.yaml
 ├── .env.example
 ├── .gitignore
+├── .dockerignore
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -106,7 +114,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`requirements.txt` (планируется):
+`requirements.txt`:
 
 ```text
 httpx
@@ -152,21 +160,39 @@ PROXY_URL=
 ### 5. Запуск
 
 ```bash
-python -m app --check     # проверка конфига, БД, токена
+python -m app --check     # конфиг, схема БД, ads_total и bootstrap-флаги
 python -m app --once      # один проход по всем запросам
 python -m app --daemon    # рабочий режим
 ```
 
-При первом запуске бот запишет текущие объявления в базу и пришлёт одно сообщение:
+При первом запуске бот запишет текущие объявления в базу и пришлёт по одной сводке на каждый запрос:
 
 ```
-✅ Запущен.
-«серебро лом»: 36 объявлений
-«серебро лот»: 100 объявлений
-Слежу за новыми.
+✅ Запущен. «серебро лом»: 36 объявлений. Слежу за новыми.
+✅ Запущен. «серебро лот»: 100 объявлений. Слежу за новыми.
+✅ Запущен. «серебро»: 100 объявлений. Слежу за новыми.
+✅ Запущен. «серебряное»: 100 объявлений. Слежу за новыми.
 ```
 
 Дальше — только новые.
+
+---
+
+## Реальный запуск после шага 5
+
+```bash
+source .venv/bin/activate
+
+DRY_RUN=1 python -m app --once     # один проход, bootstrap и сводки
+DRY_RUN=1 python -m app --daemon   # циклы до Ctrl+C/SIGTERM
+```
+
+- `DRY_RUN=1` — в Telegram ничего не уходит, готовые сообщения пишутся в лог; токен не нужен.
+- Для реальной отправки: `DRY_RUN=0` и заполненные `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`.
+- Повторный `--once` не повторяет уже сохранённые объявления.
+- БД по умолчанию: `./data/silverwatch.db` (путь меняется через `DB_PATH`).
+- Логи: консоль и `logs/app.log` (ротация 5 МБ × 3).
+- `--daemon` завершается по Ctrl+C или SIGTERM с кодом 0.
 
 ---
 
@@ -243,7 +269,13 @@ GET https://api.kufar.by/search-api/v2/search/rendered-paginated
 
 ### Bootstrap
 
-При первом запуске для каждого запроса ставится флаг `bootstrapped:<query>`. Объявления записываются, но не отправляются. Иначе первый старт превратится в 100+ сообщений.
+При первом запуске для каждого запроса отдельно ставится флаг `bootstrapped:<query>`. Объявления записываются, алерты по ним не отправляются, вместо этого приходит одна сводка:
+
+```
+✅ Запущен. «серебро лом»: 36 объявлений. Слежу за новыми.
+```
+
+Сводка отправляется по одному сообщению на запрос, в том числе для `notify: false` — это системное сообщение, а не алерт по объявлению. Если fetch не удался, флаг не ставится и bootstrap повторится на следующем проходе.
 
 ### Простой и рестарт
 
@@ -281,68 +313,70 @@ HTML-разметка экранируется, чтобы символы `<`, `
 
 ## Docker
 
+Файлы: `Dockerfile`, `docker-compose.yml`, `.dockerignore`. Образ — `python:3.12-slim`, приложение работает от non-root пользователя `appuser`.
+
 ```bash
-docker compose up -d --build
+cp .env.example .env   # заполнить токен и chat_id, если нужна реальная отправка
+docker compose build
+docker compose up -d
+docker compose ps
 docker compose logs -f
+```
+
+Проверка конфига и здоровья:
+
+```bash
 docker compose exec silverwatch python -m app --check
 ```
 
-`docker-compose.yml`:
+`docker-compose.yml` монтирует `./data` в `/app/data` (SQLite и дедупликация сохраняются между перезапусками) и `./config.yaml` только для чтения. Healthcheck каждые 60 секунд выполняет `python -m app --check`; на новом volume он сам создаёт схему БД и показывает `ads_total` и bootstrap-флаги.
 
-```yaml
-services:
-  silverwatch:
-    build: .
-    restart: unless-stopped
-    env_file: .env
-    volumes:
-      - ./data:/app/data
-      - ./config.yaml:/app/config.yaml:ro
-    healthcheck:
-      test: ["CMD", "python", "-m", "app", "--check"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
+Остановка:
+
+```bash
+docker compose down
 ```
+
+Runtime-проверка `docker compose` выполняется на машине с Docker (VPS); локально файлы проверены статически.
 
 ---
 
 ## Переезд на VPS
 
-Код не меняется.
+Код не меняется. Нужны `.env`, `config.yaml` и папка `data/` (если переносите историю).
+
+### Docker
 
 1. Установить Docker и Docker Compose.
-2. Скопировать проект, `.env`, `config.yaml` и папку `data/`.
-3. Запустить:
+2. Скопировать проект и файлы `.env`, `config.yaml`, `data/`.
+3. При необходимости выровнять владельца папки данных (в образе у `appuser` UID 1000):
+
+```bash
+sudo chown -R 1000:1000 data
+```
+
+4. Запустить и проверить:
 
 ```bash
 docker compose up -d --build
+docker compose ps
+docker compose logs --tail=50
+docker compose exec silverwatch python -m app --check
 ```
 
-4. Проверить логи и healthcheck.
+### systemd
 
-Альтернатива без Docker — `systemd`:
-
-```ini
-[Unit]
-Description=SilverCoockold
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/SilverCoockold
-ExecStart=/opt/SilverCoockold/.venv/bin/python -m app --daemon
-Restart=always
-RestartSec=5
-EnvironmentFile=/opt/SilverCoockold/.env
-
-[Install]
-WantedBy=multi-user.target
-```
+Готовый юнит лежит в `deploy/silverwatch.service`:
 
 ```bash
+sudo cp deploy/silverwatch.service /etc/systemd/system/silverwatch.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now silverwatch
+sudo systemctl status silverwatch
+journalctl -u silverwatch -f
 ```
+
+Юнит рассчитан на `/opt/SilverCoockold`, venv `.venv` и `.env` в корне проекта. Если путь другой — поправить `WorkingDirectory`, `ExecStart` и `EnvironmentFile`.
 
 Ограничение локального варианта: если компьютер уходит в сон, бот останавливается. Для круглосуточной работы отключить suspend или использовать мини-ПК/роутер/VPS.
 
@@ -356,10 +390,11 @@ sudo systemctl enable --now silverwatch
 | 2 | Клиент Kufar, retry, 429, тест на фикстуре | получаем объявления |
 | 3 | SQLite, дедуп, bootstrap | нет повторов |
 | 4 | Telegram, `DRY_RUN` | уведомления работают |
-| 5 | Два цикла, джиттер, логи, Docker | MVP готов |
-| 6 | Сутки прогона, README, VPS | стабильная работа |
-| 7 | AI-анализатор, скоринг, история цен | отбор выгодных |
-| 8 | Черновики сообщений продавцу | ручная отправка в один клик |
+| 5 | Планировщик, джиттер, логи | MVP работает локально |
+| 6 | Docker, systemd, README, перенос на VPS | запуск на сервере |
+| 7 | Сутки прогона, приёмка MVP | стабильная работа |
+| 8 | AI-анализатор, скоринг, история цен | отбор выгодных |
+| 9 | Черновики сообщений продавцу | ручная отправка в один клик |
 
 ### Будущий AI
 

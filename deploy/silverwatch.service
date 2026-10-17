@@ -1,0 +1,13 @@
+[Unit]
+Description=SilverCoockold
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/SilverCoockold
+ExecStart=/opt/SilverCoockold/.venv/bin/python -m app --daemon
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/SilverCoockold/.env
+
+[Install]
+WantedBy=multi-user.target
