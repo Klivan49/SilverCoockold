@@ -54,10 +54,13 @@ def format_ad_message(
     safe_subject = html.escape((ad.subject or "")[:SUBJECT_MAX_LENGTH], quote=False)
     safe_url = html.escape(ad.url, quote=False)
 
-    if analysis is not None and analysis.per_gram_pricing and analysis.price_byn:
-        price_text = (
-            f"Цена: {_format_number(analysis.price_byn)} BYN/г (за грамм)"
-        )
+    if analysis is not None and analysis.price_byn is not None:
+        if analysis.per_gram_pricing:
+            price_text = (
+                f"Цена: {_format_number(analysis.price_byn)} BYN/г (за грамм)"
+            )
+        else:
+            price_text = f"{_format_money(analysis.price_byn)} BYN"
     elif ad.price_byn and ad.price_byn > 0:
         price = f"{ad.price_byn / 100:.2f}".replace(".", ",")
         price_text = f"{price} BYN"
@@ -91,10 +94,14 @@ def format_ad_message(
             f"💰 {_format_money(analysis.price_per_gram)} BYN/г · "
             f"лом {_format_money(scrap_per_gram)} BYN/г"
         )
+    if analysis is not None and analysis.is_suspicious:
+        lines.append("⚠️ Похоже на ошибку в цене/весе — проверьте")
     lines.append(safe_url)
 
     text = "\n".join(lines)
-    if analysis is not None and analysis.is_below_scrap:
+    if analysis is not None and analysis.is_suspicious:
+        text = "⚠️ ПРОВЕРИТЬ\n" + text
+    elif analysis is not None and analysis.is_below_scrap:
         text = "💰 НИЖЕ ЛОМА\n" + text
     return text
 

@@ -304,7 +304,8 @@ class Scheduler:
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
             should_send = (
-                analysis is not None and analysis.is_below_scrap
+                analysis is not None
+                and (analysis.is_below_scrap or analysis.is_suspicious)
             ) or query.notify
             if not should_send:
                 continue
@@ -322,11 +323,12 @@ class Scheduler:
                 error=None if ok else "не удалось отправить",
             )
             sent += 1
-            reason = (
-                "ниже лома"
-                if analysis is not None and analysis.is_below_scrap
-                else "notify"
-            )
+            if analysis is not None and analysis.is_below_scrap:
+                reason = "ниже лома"
+            elif analysis is not None and analysis.is_suspicious:
+                reason = "подозрительно дешево"
+            else:
+                reason = "notify"
             logger.info(
                 "Алерт ad_id=%s, запрос «%s», причина=%s", ad.ad_id, query.q, reason
             )

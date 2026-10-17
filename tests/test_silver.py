@@ -157,3 +157,41 @@ def test_no_scrap_rate_for_unknown_purity() -> None:
     assert result.scrap_price is None
     assert result.is_below_scrap is False
     assert "нет цены лома" in result.note
+
+
+def test_body_total_price_overrides_placeholder() -> None:
+    """Явная цена в описании важнее маленькой цены в карточке."""
+    result = analyze("875 проба, вес 100 г, Цена 1500 рублей", 750)
+
+    assert result.price_byn == 1500
+    assert result.price_per_gram == pytest.approx(15.0)
+    assert result.is_below_scrap is False
+
+
+def test_non_silver_is_ignored() -> None:
+    """Посеребрение и латунь не считаем серебром."""
+    result = analyze(
+        "Латунь и глубокое посеребрение, 90 граммов, цена 10 рублей",
+        1000,
+    )
+
+    assert result.note == "не серебро"
+    assert result.is_suspicious is False
+    assert result.is_below_scrap is False
+
+
+def test_suspicious_tiny_price_is_not_below() -> None:
+    """Слишком низкая цена за грамм — повод проверить, а не алерт «ниже лома»."""
+    result = analyze("925 проба, вес 51 г, клеймо", 1000)
+
+    assert result.is_suspicious is True
+    assert result.is_below_scrap is False
+    assert "подозрительно" in result.note
+
+
+def test_unrealistic_weight_is_ignored() -> None:
+    """Список годов не должен превращаться в 1933 грамма."""
+    result = analyze("2 злотых, 1932,1933,1934г., серебро", 23000)
+
+    assert result.weight_g is None
+    assert result.is_suspicious is False

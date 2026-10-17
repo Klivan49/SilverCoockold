@@ -34,6 +34,21 @@ _PER_GRAM_RE = re.compile(
     r"|(?:руб\s*/\s*гр\b)",
     re.IGNORECASE,
 )
+_BODY_PRICE_RE = re.compile(
+    r"(?:цена|стоимость|продам|отдам|за\s+всё|за\s+все)\s*[:\-—]?\s*"
+    r"(\d{1,6}(?:\s*[,.]\s*\d{1,2})?)\s*"
+    r"(?:руб(?:лей|ля|\.)?|BYN|р\b)",
+    re.IGNORECASE,
+)
+_SILVER_RE = re.compile(
+    r"серебр|925|875|916|900|830|800|999|стерлинг|sterling|\bAg\b",
+    re.IGNORECASE,
+)
+_NOT_SILVER_RE = re.compile(
+    r"посеребр|мельхиор|латун|бижутер|нержавеющ|сталь|"
+    r"покрытие\s+серебр|alpacca|нейзильбер|silver.?plated",
+    re.IGNORECASE,
+)
 _NUMBER_RE = re.compile(r"(?<![\d.,])(\d{2,3})(?!\d)")
 
 
@@ -50,6 +65,7 @@ class SilverAnalysis:
     is_below_scrap: bool
     per_gram_pricing: bool
     note: str
+    is_suspicious: bool = False
 
 
 def _to_float(raw: str) -> float | None:
@@ -59,6 +75,15 @@ def _to_float(raw: str) -> float | None:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def _is_silver(text: str) -> bool:
+    """Похоже ли объявление на изделие из серебра, а не на посеребрение."""
+    if _NOT_SILVER_RE.search(text) and not re.search(
+        r"\b(?:925|875|916|900|830|800|999)\b", text
+    ):
+        return False
+    return _SILVER_RE.search(text) is not None
 
 
 def _weight_context(text: str, position: int) -> bool:
@@ -78,6 +103,9 @@ def _extract_weight(text: str, notes: list[str]) -> float | None:
         raw = match.group("num")
         value = _to_float(raw)
         if value is None or value <= 0:
+            continue
+        if value > 1000:
+            notes.append("вес нереалистичен")
             continue
         unit = match.group("unit").lower()
         has_decimal = "," in raw or "." in raw
@@ -152,10 +180,32 @@ def _per_gram_pricing(text: str) -> bool:
     return _PER_GRAM_RE.search(text) is not None
 
 
+def _extract_body_price(text: str) -> float | None:
+    """Найти явную общую цену в описании: «Цена 1500 рублей»."""
+    match = _BODY_PRICE_RE.search(text)
+    if match is None:
+        return None
+    value = _to_float(match.group(1))
+    return value if value is not None and value > 0 else None
+
+
 def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
     """Разобрать объявление и посчитать, дешевле ли оно лома."""
     text = f"{ad.subject}\n{body or ''}".strip()
     notes: list[str] = []
+    if not _is_silver(text):
+        return SilverAnalysis(
+            weight_g=None,
+            purity=None,
+            effective_purity=None,
+            price_byn=None,
+            price_per_gram=None,
+            scrap_price=None,
+            is_below_scrap=False,
+            per_gram_pricing=False,
+            note="не серебро",
+            is_suspicious=False,
+        )
     if not (body or "").strip():
         notes.append("описание пустое")
 
@@ -169,22 +219,29 @@ def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
     listing_price = (
         ad.price_byn / 100.0 if ad.price_byn and ad.price_byn > 0 else None
     )
-    if listing_price is None:
-        notes.append("цена не указана")
-
     per_gram = _per_gram_pricing(text)
+    body_price = _extract_body_price(text)
     price_per_gram: float | None = None
     total_price: float | None = None
-    if listing_price is not None:
-        if per_gram:
+
+    if per_gram:
+        if listing_price is not None:
             price_per_gram = listing_price
             if weight is not None:
                 total_price = price_per_gram * weight
             notes.append("цена за грамм")
-        else:
-            total_price = listing_price
-            if weight is not None and weight > 0:
-                price_per_gram = total_price / weight
+    else:
+        total_price = listing_price
+        if body_price is not None and (
+            total_price is None or body_price > total_price * 1.5
+        ):
+            total_price = body_price
+            notes.append(f"цена из описания: {body_price:g} BYN")
+        if total_price is not None and weight is not None and weight > 0:
+            price_per_gram = total_price / weight
+
+    if total_price is None and price_per_gram is None:
+        notes.append("цена не указана")
 
     rate = scrap_rate(prices, effective)
     scrap_price: float | None = None
@@ -200,20 +257,29 @@ def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
     if purity is None:
         notes.append("проба не найдена")
 
+    suspicious = price_per_gram is not None and (
+        price_per_gram < 1.0
+        or (rate is not None and price_per_gram < rate * 0.15)
+    )
+    if suspicious:
+        notes.append("подозрительно дешево: проверьте цену и вес")
+
     is_below = (
         total_price is not None
         and scrap_price is not None
         and total_price < scrap_price
+        and not suspicious
     )
 
     return SilverAnalysis(
         weight_g=weight,
         purity=purity,
         effective_purity=effective,
-        price_byn=listing_price,
+        price_byn=price_per_gram if per_gram else total_price,
         price_per_gram=price_per_gram,
         scrap_price=scrap_price,
         is_below_scrap=is_below,
         per_gram_pricing=per_gram,
         note="; ".join(notes),
+        is_suspicious=suspicious,
     )
