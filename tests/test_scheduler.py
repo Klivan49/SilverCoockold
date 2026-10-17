@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -28,12 +29,19 @@ from app.storage import Storage
 class FakeKufar:
     """Подделка KufarClient: отдаёт заранее заданные ответы без сети."""
 
-    def __init__(self, responses: dict[str, list[Ad] | Exception]) -> None:
+    def __init__(
+        self,
+        responses: dict[str, list[Ad] | Exception],
+        delay: float = 0.0,
+    ) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        self.delay = delay
 
     def fetch(self, query: str) -> list[Ad]:
         self.calls.append(query)
+        if self.delay:
+            time.sleep(self.delay)
         response = self.responses.get(query, [])
         if isinstance(response, Exception):
             raise response
@@ -379,3 +387,59 @@ def test_tracking_false_pauses_and_resumes(tmp_path: Path) -> None:
     assert len(notifier.ad_calls) == 1
     assert status is not None
     assert status["tracking"] is True
+
+
+def test_manual_scan_works_with_tracking_false(tmp_path: Path) -> None:
+    """Ручной скан идёт при tracking=false и не меняет tracking."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    notifier = FakeNotifier()
+    kufar = FakeKufar({query.q: [make_ad("1")]})
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+    scheduler.tracking = False
+
+    result = asyncio.run(scheduler.run_manual_scan())
+
+    assert result == {"new": 1, "sent": 1}
+    assert kufar.calls == [query.q]
+    assert scheduler.tracking is False
+    assert len(notifier.ad_calls) == 1
+
+
+def test_manual_scan_does_not_bootstrap(tmp_path: Path) -> None:
+    """Ручной скан не запускает bootstrap и не шлёт сводку."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    notifier = FakeNotifier()
+    kufar = FakeKufar({query.q: [make_ad("1")]})
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_manual_scan())
+
+    assert result == {"new": 0, "sent": 0}
+    assert kufar.calls == []
+    assert notifier.texts == []
+    assert storage.is_bootstrapped(query.q) is False
+
+
+def test_manual_scan_rejects_parallel_run(tmp_path: Path) -> None:
+    """Второй параллельный ручной скан отклоняется без второго fetch."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    notifier = FakeNotifier()
+    kufar = FakeKufar({query.q: [make_ad("1")]}, delay=0.3)
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    async def scenario() -> tuple[dict[str, int], dict[str, int]]:
+        first = asyncio.create_task(scheduler.run_manual_scan())
+        await asyncio.sleep(0.05)
+        second = await scheduler.run_manual_scan()
+        return await first, second
+
+    first_result, second_result = asyncio.run(scenario())
+
+    assert first_result == {"new": 1, "sent": 1}
+    assert second_result == {"new": 0, "sent": 0}
+    assert len(kufar.calls) == 1

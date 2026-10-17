@@ -9,6 +9,7 @@ import re
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.models import Ad
 
@@ -16,6 +17,21 @@ logger = logging.getLogger(__name__)
 
 SUBJECT_MAX_LENGTH = 200
 TOKEN_PATTERN = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+SCAN_BUTTON_TEXT = "🔄 Скан"
+FORCE_SCAN_CALLBACK = "force_scan"
+
+
+def scan_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой принудительного скана для алертов."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=SCAN_BUTTON_TEXT, callback_data=FORCE_SCAN_CALLBACK
+                )
+            ]
+        ]
+    )
 
 
 def format_ad_message(ad: Ad, query: str) -> str:
@@ -69,10 +85,14 @@ class Notifier:
         return self._bot
 
     async def send_ad(self, ad: Ad, query: str) -> bool:
-        """Отправить уведомление о новом объявлении."""
-        return await self.send_text(format_ad_message(ad, query))
+        """Отправить уведомление о новом объявлении с кнопкой скана."""
+        return await self.send_text(
+            format_ad_message(ad, query), reply_markup=scan_keyboard()
+        )
 
-    async def send_text(self, text: str) -> bool:
+    async def send_text(
+        self, text: str, reply_markup: InlineKeyboardMarkup | None = None
+    ) -> bool:
         """Отправить готовое HTML-сообщение; вернуть True при успехе."""
         if self._is_dry_run():
             logger.info("[DRY_RUN] %s", " ".join(text.splitlines()))
@@ -80,7 +100,7 @@ class Notifier:
 
         bot = self._get_bot()
         try:
-            await self._send(bot, text)
+            await self._send(bot, text, reply_markup)
             return True
         except TelegramRetryAfter as exc:
             logger.warning(
@@ -94,7 +114,7 @@ class Notifier:
             return False
 
         try:
-            await self._send(bot, text)
+            await self._send(bot, text, reply_markup)
             return True
         except (TelegramAPIError, OSError) as exc:
             logger.error(
@@ -103,13 +123,19 @@ class Notifier:
             )
             return False
 
-    async def _send(self, bot: Bot, text: str) -> None:
-        """Вызвать sendMessage с HTML и без превью ссылки."""
+    async def _send(
+        self,
+        bot: Bot,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
+        """Вызвать sendMessage с HTML, без превью ссылки и с клавиатурой."""
         await bot.send_message(
             chat_id=self._chat_id,
             text=text,
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=reply_markup,
         )
 
     async def close(self) -> None:

@@ -84,6 +84,7 @@ class Scheduler:
         self.status_path = Path(status_path or DEFAULT_STATUS_PATH)
         self.sleep = sleep_inhibitor or SleepInhibitor()
         self._http_lock = asyncio.Lock()
+        self._manual_scan_lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._ensure_control_file()
         state = read_control(self.control_path)
@@ -97,10 +98,58 @@ class Scheduler:
         write_control(self.control_path, ControlState())
         logger.info("Создан %s с настройками по умолчанию", self.control_path)
 
+    @property
+    def is_manual_scan_running(self) -> bool:
+        """Идёт ли сейчас ручной скан."""
+        return self._manual_scan_lock.locked()
+
     async def _fetch(self, query: str) -> list[Ad]:
         """Сделать HTTP-запрос последовательно с остальными задачами."""
         async with self._http_lock:
             return await asyncio.to_thread(self.kufar.fetch, query)
+
+    async def run_manual_scan(self) -> dict[str, int]:
+        """Один проход по всем запросам вне расписания.
+
+        Не меняет tracking, не запускает bootstrap и не ждёт следующего
+        интервала. Параллельный вызов отклоняется.
+        """
+        if self._manual_scan_lock.locked():
+            logger.info("Ручной скан уже выполняется, повторный запуск отклонён")
+            return {"new": 0, "sent": 0}
+
+        total_new = 0
+        total_sent = 0
+        async with self._manual_scan_lock:
+            for query in self.config.queries:
+                if not self.storage.is_bootstrapped(query.q):
+                    logger.warning(
+                        "Ручной скан: «%s» ещё не bootstrapped, пропуск", query.q
+                    )
+                    continue
+                try:
+                    result = await self._regular_pass(query, ignore_tracking=True)
+                except KufarError:
+                    logger.exception(
+                        "Ручной скан: Kufar не ответил по «%s»", query.q
+                    )
+                    await self._notify_429()
+                    continue
+                except Exception:
+                    logger.exception(
+                        "Ручной скан: ошибка прохода по «%s»", query.q
+                    )
+                    continue
+                total_new += result.new
+                total_sent += result.sent
+
+            self._write_status()
+            logger.info(
+                "Ручной скан завершён: новых=%d, отправлено=%d",
+                total_new,
+                total_sent,
+            )
+            return {"new": total_new, "sent": total_sent}
 
     async def run_pass(self, query: QueryConfig) -> PassResult:
         """Выполнить один проход по запросу и вернуть статистику."""
@@ -156,10 +205,12 @@ class Scheduler:
         logger.info("Bootstrap «%s»: сохранено %d объявлений", query.q, len(ads))
         return PassResult(new=new_count)
 
-    async def _regular_pass(self, query: QueryConfig) -> PassResult:
+    async def _regular_pass(
+        self, query: QueryConfig, *, ignore_tracking: bool = False
+    ) -> PassResult:
         """Обычный проход: сохранить новое и отправить уведомления."""
         ads = await self._fetch(query.q)
-        if not self.tracking:
+        if not ignore_tracking and not self.tracking:
             logger.info("Отслеживание выключено во время запроса «%s»", query.q)
             return PassResult()
         new_count = 0

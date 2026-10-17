@@ -125,6 +125,23 @@ def test_send_text_uses_html_and_no_preview() -> None:
     assert fake.calls[0]["text"] == "<b>текст</b>"
     assert fake.calls[0]["parse_mode"] == "HTML"
     assert fake.calls[0]["disable_web_page_preview"] is True
+    assert fake.calls[0]["reply_markup"] is None
+
+
+def test_send_ad_has_scan_keyboard() -> None:
+    """Каждый алерт уходит с inline-кнопкой «🔄 Скан»."""
+    notifier = Notifier(token="123456:secret-token", chat_id="42", dry_run=False)
+    fake = FakeBot()
+    notifier._bot = fake  # type: ignore[assignment]
+
+    result = asyncio.run(notifier.send_ad(make_ad(), "серебро лом"))
+
+    assert result is True
+    assert fake.calls[0]["text"].startswith("🔥 Новое: «серебро лом»")
+    markup = fake.calls[0]["reply_markup"]
+    button = markup.inline_keyboard[0][0]
+    assert button.text == "🔄 Скан"
+    assert button.callback_data == "force_scan"
 
 
 def test_retry_after_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:

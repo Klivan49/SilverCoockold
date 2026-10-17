@@ -40,6 +40,7 @@ class LimitsConfig:
     max_alerts_per_cycle: int
     catchup_max_age_hours: float
     request_timeout: float
+    force_scan_cooldown_sec: int = 300
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,10 @@ def _parse_limits(raw: Any) -> LimitsConfig:
         ),
         request_timeout=_positive_number(
             data.get("request_timeout", 20), "limits.request_timeout"
+        ),
+        force_scan_cooldown_sec=_positive_int(
+            data.get("force_scan_cooldown_sec", 300),
+            "limits.force_scan_cooldown_sec",
         ),
     )
 

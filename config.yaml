@@ -20,3 +20,4 @@ limits:
   max_alerts_per_cycle: 20
   catchup_max_age_hours: 12
   request_timeout: 20
+  force_scan_cooldown_sec: 300

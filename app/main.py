@@ -20,6 +20,7 @@ from app.notifier import Notifier
 from app.scheduler import Scheduler
 from app.status import DEFAULT_STATUS_PATH
 from app.storage import Storage
+from app.telegram_control import TelegramPoller
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_FILE = LOG_DIR / "app.log"
@@ -92,7 +93,8 @@ def check(config: Config) -> int:
     print(
         f"Лимиты: max_alerts_per_cycle={config.limits.max_alerts_per_cycle}, "
         f"catchup_max_age_hours={config.limits.catchup_max_age_hours:g}, "
-        f"request_timeout={config.limits.request_timeout:g} с"
+        f"request_timeout={config.limits.request_timeout:g} с, "
+        f"force_scan_cooldown_sec={config.limits.force_scan_cooldown_sec}"
     )
     print(f"БД: {config.db_path}")
     print(f"Объявлений в базе: {ads_total}")
@@ -110,7 +112,9 @@ def check(config: Config) -> int:
     return 0
 
 
-def create_components(config: Config) -> tuple[Scheduler, Notifier, KufarClient]:
+def create_components(
+    config: Config,
+) -> tuple[Scheduler, Notifier, KufarClient, Storage]:
     """Создать Storage, Notifier, KufarClient и Scheduler на один запуск."""
     storage = Storage(config.db_path)
     notifier = Notifier(
@@ -129,14 +133,14 @@ def create_components(config: Config) -> tuple[Scheduler, Notifier, KufarClient]
         control_path=control_path,
         status_path=status_path,
     )
-    return scheduler, notifier, kufar
+    return scheduler, notifier, kufar, storage
 
 
 def run_once(config: Config) -> int:
     """Один проход по всем запросам, включая bootstrap."""
     logging.info("Режим --once: один проход по всем запросам")
     print("Один проход по всем запросам")
-    scheduler, notifier, kufar = create_components(config)
+    scheduler, notifier, kufar, _storage = create_components(config)
 
     async def _run() -> None:
         try:
@@ -152,8 +156,15 @@ def run_once(config: Config) -> int:
 
 
 def run_daemon(config: Config) -> int:
-    """Рабочий режим: циклы по запросам и корректный выход по сигналу."""
-    scheduler, notifier, kufar = create_components(config)
+    """Рабочий режим: циклы, Telegram polling и выход по сигналу."""
+    scheduler, notifier, kufar, storage = create_components(config)
+    poller = TelegramPoller(
+        config.telegram_token,
+        config.telegram_chat_id,
+        scheduler,
+        storage,
+        config.limits.force_scan_cooldown_sec,
+    )
 
     async def _run() -> None:
         stop = asyncio.Event()
@@ -162,10 +173,22 @@ def run_daemon(config: Config) -> int:
             loop.add_signal_handler(sig, stop.set)
 
         tasks = scheduler.start()
+        poller_task: asyncio.Task[None] | None = None
+        if not config.dry_run and config.telegram_token and config.telegram_chat_id:
+            poller_task = asyncio.create_task(poller.run(), name="telegram")
+        else:
+            logging.info(
+                "Telegram poller не запущен: DRY_RUN или нет токена/chat_id"
+            )
+
         print("Демон запущен. Для выхода нажмите Ctrl+C.")
         try:
             await stop.wait()
         finally:
+            if poller_task is not None:
+                poller_task.cancel()
+                await asyncio.gather(poller_task, return_exceptions=True)
+            await poller.close()
             await scheduler.stop(tasks)
             await notifier.close()
             kufar.close()
