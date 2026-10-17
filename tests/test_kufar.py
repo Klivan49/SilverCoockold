@@ -80,6 +80,21 @@ def test_fetch_detail_broken_next_data() -> None:
         make_client(handler).fetch_detail("https://www.kufar.by/item/1")
 
 
+def test_fetch_detail_bad_structure() -> None:
+    """Неверная структура data тоже даёт KufarError."""
+    html = (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        '{"props":{"initialState":{"adView":{"data":"oops"}}}}'
+        "</script></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html)
+
+    with pytest.raises(KufarError):
+        make_client(handler).fetch_detail("https://www.kufar.by/item/1")
+
+
 def test_fetch_parses_fixture() -> None:
     payload = load_fixture()
 

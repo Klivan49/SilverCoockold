@@ -207,6 +207,8 @@ class KufarClient:
                 raise KufarError(
                     "Kufar detail: не удалось разобрать __NEXT_DATA__"
                 ) from exc
+            if not isinstance(data, dict):
+                raise KufarError("Kufar detail: неверная структура данных")
 
             body = data.get("body") or data.get("description")
             if not isinstance(body, str):
