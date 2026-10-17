@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from dotenv import load_dotenv
@@ -41,6 +42,7 @@ class LimitsConfig:
     catchup_max_age_hours: float
     request_timeout: float
     force_scan_cooldown_sec: int = 300
+    stale_poll_sec: int = 180
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class Config:
     proxy_url: str | None
     telegram_chat_ids: list[str] = field(default_factory=list)
     telegram_admin_ids: list[str] = field(default_factory=list)
+    healthcheck_url: str | None = None
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -131,6 +134,10 @@ def _parse_limits(raw: Any) -> LimitsConfig:
         force_scan_cooldown_sec=_positive_int(
             data.get("force_scan_cooldown_sec", 300),
             "limits.force_scan_cooldown_sec",
+        ),
+        stale_poll_sec=_positive_int(
+            data.get("stale_poll_sec", 180),
+            "limits.stale_poll_sec",
         ),
     )
 
@@ -211,6 +218,14 @@ def load_config(config_path: Path | None = None) -> Config:
 
     proxy_url = (os.getenv("PROXY_URL") or "").strip() or None
 
+    healthcheck_url = (os.getenv("HEALTHCHECK_URL") or "").strip() or None
+    if healthcheck_url is not None:
+        parsed = urlparse(healthcheck_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ConfigError(
+                "HEALTHCHECK_URL должен быть полным http(s)-адресом"
+            )
+
     if not dry_run and token is None:
         raise ConfigError("при DRY_RUN=0 обязателен TELEGRAM_BOT_TOKEN")
     if not dry_run and not chat_ids:
@@ -230,4 +245,5 @@ def load_config(config_path: Path | None = None) -> Config:
         proxy_url=proxy_url,
         telegram_chat_ids=chat_ids,
         telegram_admin_ids=admin_ids,
+        healthcheck_url=healthcheck_url,
     )

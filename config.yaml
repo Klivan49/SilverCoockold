@@ -21,3 +21,4 @@ limits:
   catchup_max_age_hours: 12
   request_timeout: 20
   force_scan_cooldown_sec: 300
+  stale_poll_sec: 180

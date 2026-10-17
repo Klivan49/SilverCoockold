@@ -27,10 +27,19 @@ logger = logging.getLogger(__name__)
 
 BOOTSTRAP_TEXT = "✅ Запущен. «{query}»: {count} объявлений. Слежу за новыми."
 DIGEST_TEXT = "Ещё {count} новых по запросу «{query}»: {url}"
-ERROR_429_TEXT = "⚠️ Kufar 429, пауза 5 минут"
 KUFAR_PAUSE_SECONDS = 5 * 60
 NOTICE_INTERVAL = timedelta(minutes=30)
-LAST_429_NOTICE_KEY = "last_429_notice_at"
+LAST_KUFAR_NOTICE_KEY = "last_kufar_notice_at"
+KUFAR_ERROR_ACTIVE = "kufar_error_active"
+KUFAR_ERROR_QUERY = "kufar_error_query"
+KUFAR_ERROR_KIND = "kufar_error_kind"
+KUFAR_ERROR_STATUS = "kufar_error_status"
+KUFAR_RECOVERY_TEXT = "✅ Kufar снова отвечает"
+STALE_ALERT_INTERVAL = timedelta(minutes=30)
+STALE_CHECK_INTERVAL_SECONDS = 30
+STALE_ALERT_PREFIX = "stale_alert:"
+ERROR_429_TEXT = "⚠️ Kufar: 429, пауза 5 минут"
+LAST_429_NOTICE_KEY = LAST_KUFAR_NOTICE_KEY  # совместимость со старым именем
 
 
 @dataclass
@@ -94,6 +103,7 @@ class Scheduler:
         state = read_control(self.control_path)
         self.tracking = state.tracking
         self.prevent_sleep = state.prevent_sleep
+        self._started_at = datetime.now(timezone.utc)
 
     def _ensure_control_file(self) -> None:
         """Создать control.json с настройками по умолчанию, если файла нет."""
@@ -162,11 +172,11 @@ class Scheduler:
                     result = await self._regular_pass(
                         query, ignore_tracking=True, prices=prices
                     )
-                except KufarError:
+                except KufarError as error:
                     logger.exception(
                         "Ручной скан: Kufar не ответил по «%s»", query.q
                     )
-                    await self._notify_429()
+                    await self._notify_kufar_error(error, query.q)
                     continue
                 except Exception:
                     logger.exception(
@@ -196,9 +206,9 @@ class Scheduler:
                 result = await self._regular_pass(query)
             else:
                 result = await self._bootstrap_pass(query)
-        except KufarError:
+        except KufarError as error:
             logger.exception("Kufar: запрос «%s» не выполнен", query.q)
-            await self._notify_429()
+            await self._notify_kufar_error(error, query.q)
             logger.warning("Kufar: пауза 5 минут после ошибки по «%s»", query.q)
             result = PassResult(paused=True)
         except Exception:
@@ -235,6 +245,7 @@ class Scheduler:
             query=html.escape(query.q, quote=False), count=len(ads)
         )
         await self.notifier.send_text(text)
+        await self._on_successful_poll(query.q)
         logger.info("Bootstrap «%s»: сохранено %d объявлений", query.q, len(ads))
         return PassResult(new=new_count)
 
@@ -330,12 +341,21 @@ class Scheduler:
             logger.info("Дайджест «%s»: ещё %d новых", query.q, skipped)
 
         self.storage.set_last_poll(query.q, utc_now_iso())
+        await self._on_successful_poll(query.q)
         return PassResult(new=new_count, sent=sent)
 
-    async def _notify_429(self) -> None:
-        """Сообщить админу о 429, но не чаще одного раза в 30 минут."""
+    async def _notify_kufar_error(self, error: KufarError, query: str) -> None:
+        """Запомнить ошибку Kufar и сообщить о ней не чаще раза в 30 минут."""
+        self.storage.set_meta(KUFAR_ERROR_ACTIVE, "1")
+        self.storage.set_meta(KUFAR_ERROR_QUERY, query)
+        self.storage.set_meta(KUFAR_ERROR_KIND, error.kind)
+        if error.status_code is not None:
+            self.storage.set_meta(KUFAR_ERROR_STATUS, str(error.status_code))
+        else:
+            self.storage.delete_meta(KUFAR_ERROR_STATUS)
+
         now = datetime.now(timezone.utc)
-        last = self.storage.get_meta(LAST_429_NOTICE_KEY)
+        last = self.storage.get_meta(LAST_KUFAR_NOTICE_KEY)
         if last:
             try:
                 last_dt = datetime.fromisoformat(last)
@@ -345,11 +365,109 @@ class Scheduler:
                 if last_dt.tzinfo is None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
                 if now - last_dt < NOTICE_INTERVAL:
-                    logger.info("Kufar 429: уведомление админу пропущено (лимит 30 минут)")
+                    logger.info(
+                        "Kufar: уведомление об ошибке пропущено (лимит 30 минут)"
+                    )
                     return
 
-        await self.notifier.send_text(ERROR_429_TEXT)
-        self.storage.set_meta(LAST_429_NOTICE_KEY, now.isoformat())
+        if error.kind == "rate_limit":
+            text = "⚠️ Kufar: 429, пауза 5 минут"
+        elif error.kind == "network":
+            text = "⚠️ Kufar: нет связи, пауза 5 минут"
+        elif error.kind == "http":
+            code = error.status_code if error.status_code is not None else "?"
+            text = f"⚠️ Kufar: HTTP {code}, пауза 5 минут"
+        else:
+            text = "⚠️ Kufar: не удалось разобрать ответ"
+
+        await self.notifier.send_text(text)
+        self.storage.set_meta(LAST_KUFAR_NOTICE_KEY, now.isoformat())
+
+    async def _on_successful_poll(self, query: str) -> None:
+        """Сообщить о восстановлении после ошибки Kufar/stale-опроса."""
+        if (
+            self.storage.get_meta(KUFAR_ERROR_ACTIVE) == "1"
+            and self.storage.get_meta(KUFAR_ERROR_QUERY) == query
+        ):
+            await self.notifier.send_text(KUFAR_RECOVERY_TEXT)
+            for key in (
+                KUFAR_ERROR_ACTIVE,
+                KUFAR_ERROR_QUERY,
+                KUFAR_ERROR_KIND,
+                KUFAR_ERROR_STATUS,
+            ):
+                self.storage.delete_meta(key)
+
+        stale_key = f"{STALE_ALERT_PREFIX}{query}"
+        if self.storage.get_meta(stale_key):
+            await self.notifier.send_text(
+                f"✅ Опрос «{html.escape(query, quote=False)}» восстановлен"
+            )
+            self.storage.delete_meta(stale_key)
+
+    async def check_stale_polls(self) -> None:
+        """Проверить зависшие опросы и предупредить не чаще раза в 30 минут."""
+        if not self.tracking:
+            return
+        now = datetime.now(timezone.utc)
+        for query in self.config.queries:
+            if not self.storage.is_bootstrapped(query.q):
+                continue
+            last_poll = self.storage.last_poll(query.q)
+            if last_poll:
+                try:
+                    last_dt = datetime.fromisoformat(last_poll)
+                except ValueError:
+                    logger.warning(
+                        "stale: некорректный last_poll для «%s»", query.q
+                    )
+                    continue
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+            else:
+                last_dt = self._started_at
+
+            age = (now - last_dt).total_seconds()
+            threshold = max(
+                self.config.limits.stale_poll_sec,
+                query.interval * 2 + 60,
+            )
+            if age <= threshold:
+                continue
+
+            stale_key = f"{STALE_ALERT_PREFIX}{query.q}"
+            last_alert = self.storage.get_meta(stale_key)
+            if last_alert:
+                try:
+                    alert_dt = datetime.fromisoformat(last_alert)
+                except ValueError:
+                    alert_dt = None
+                if alert_dt is not None:
+                    if alert_dt.tzinfo is None:
+                        alert_dt = alert_dt.replace(tzinfo=timezone.utc)
+                    if now - alert_dt < STALE_ALERT_INTERVAL:
+                        continue
+
+            minutes = max(1, int(age // 60))
+            await self.notifier.send_text(
+                f"⚠️ Нет успешных опросов «{html.escape(query.q, quote=False)}» "
+                f"{minutes} минут"
+            )
+            self.storage.set_meta(stale_key, now.isoformat())
+            logger.warning(
+                "stale: «%s» без успешного опроса %d мин", query.q, minutes
+            )
+
+    async def _stale_watchdog(self) -> None:
+        """Раз в 30 секунд проверять stale-опросы."""
+        while True:
+            try:
+                await self.check_stale_polls()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("stale watchdog: ошибка проверки")
+            await asyncio.sleep(STALE_CHECK_INTERVAL_SECONDS)
 
     def start(self) -> list[asyncio.Task[None]]:
         """Запустить циклы запросов, наблюдатель и писателя статуса."""
@@ -361,6 +479,7 @@ class Scheduler:
         ]
         tasks.append(asyncio.create_task(self._control_watcher(), name="control"))
         tasks.append(asyncio.create_task(self._status_writer(), name="status"))
+        tasks.append(asyncio.create_task(self._stale_watchdog(), name="stale"))
         logger.info("Планировщик запущен: задач %d", len(tasks))
         return tasks
 

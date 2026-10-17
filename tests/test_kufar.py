@@ -76,8 +76,10 @@ def test_fetch_detail_broken_next_data() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=html)
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler).fetch_detail("https://www.kufar.by/item/1")
+
+    assert caught.value.kind == "parse"
 
 
 def test_fetch_detail_bad_structure() -> None:
@@ -181,9 +183,11 @@ def test_429_exhausts_retries() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429)
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler, sleeps).fetch("q")
 
+    assert caught.value.kind == "rate_limit"
+    assert caught.value.status_code == 429
     assert sleeps == [30, 60, 120]
 
 
@@ -193,9 +197,11 @@ def test_500_exhausts_retries() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler, sleeps).fetch("q")
 
+    assert caught.value.kind == "http"
+    assert caught.value.status_code == 500
     assert sleeps == [30, 60, 120]
 
 
@@ -207,9 +213,11 @@ def test_404_fails_immediately() -> None:
         calls["n"] += 1
         return httpx.Response(404)
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler, sleeps).fetch("q")
 
+    assert caught.value.kind == "http"
+    assert caught.value.status_code == 404
     assert calls["n"] == 1
     assert sleeps == []
 
@@ -218,16 +226,31 @@ def test_broken_json() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not json")
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler).fetch("q")
+
+    assert caught.value.kind == "parse"
 
 
 def test_missing_ads_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"total": 0})
 
-    with pytest.raises(KufarError):
+    with pytest.raises(KufarError) as caught:
         make_client(handler).fetch("q")
+
+    assert caught.value.kind == "parse"
+
+
+def test_network_error_kind() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    with pytest.raises(KufarError) as caught:
+        make_client(handler).fetch("q")
+
+    assert caught.value.kind == "network"
+    assert caught.value.status_code is None
 
 
 def test_ad_without_link_is_skipped() -> None:

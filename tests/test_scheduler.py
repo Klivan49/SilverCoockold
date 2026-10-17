@@ -16,7 +16,12 @@ from app.kufar import KufarError
 from app.models import Ad
 from app.scheduler import (
     ERROR_429_TEXT,
-    LAST_429_NOTICE_KEY,
+    KUFAR_ERROR_ACTIVE,
+    KUFAR_ERROR_KIND,
+    KUFAR_ERROR_QUERY,
+    KUFAR_RECOVERY_TEXT,
+    LAST_KUFAR_NOTICE_KEY,
+    STALE_ALERT_PREFIX,
     Scheduler,
     interval_with_jitter,
     is_older_than,
@@ -292,7 +297,9 @@ def test_kufar_error_does_not_kill_cycle(tmp_path: Path) -> None:
     query = make_query()
     storage = Storage(tmp_path / "test.db")
     storage.set_bootstrapped(query.q)
-    kufar = FakeKufar({query.q: KufarError("HTTP 429")})
+    kufar = FakeKufar(
+        {query.q: KufarError("HTTP 429", kind="rate_limit", status_code=429)}
+    )
     notifier = FakeNotifier()
     scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
 
@@ -302,7 +309,10 @@ def test_kufar_error_does_not_kill_cycle(tmp_path: Path) -> None:
     assert first.paused is True
     assert second.paused is True
     assert notifier.texts.count(ERROR_429_TEXT) == 1
-    assert storage.get_meta(LAST_429_NOTICE_KEY) is not None
+    assert storage.get_meta(LAST_KUFAR_NOTICE_KEY) is not None
+    assert storage.get_meta(KUFAR_ERROR_ACTIVE) == "1"
+    assert storage.get_meta(KUFAR_ERROR_QUERY) == query.q
+    assert storage.get_meta(KUFAR_ERROR_KIND) == "rate_limit"
 
     kufar.responses[query.q] = [make_ad("1")]
     third = asyncio.run(scheduler.run_pass(query))
@@ -310,6 +320,129 @@ def test_kufar_error_does_not_kill_cycle(tmp_path: Path) -> None:
     assert third.paused is False
     assert third.sent == 1
     assert len(notifier.ad_calls) == 1
+    assert notifier.texts[-1] == KUFAR_RECOVERY_TEXT
+    assert storage.get_meta(KUFAR_ERROR_ACTIVE) is None
+
+    fourth = asyncio.run(scheduler.run_pass(query))
+    assert fourth.paused is False
+    assert notifier.texts.count(KUFAR_RECOVERY_TEXT) == 1
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            KufarError("429", kind="rate_limit", status_code=429),
+            "⚠️ Kufar: 429, пауза 5 минут",
+        ),
+        (
+            KufarError("network", kind="network"),
+            "⚠️ Kufar: нет связи, пауза 5 минут",
+        ),
+        (
+            KufarError("http", kind="http", status_code=503),
+            "⚠️ Kufar: HTTP 503, пауза 5 минут",
+        ),
+        (
+            KufarError("parse", kind="parse"),
+            "⚠️ Kufar: не удалось разобрать ответ",
+        ),
+    ],
+)
+def test_kufar_error_notice_texts(
+    tmp_path: Path, error: KufarError, expected: str
+) -> None:
+    """Текст алерта зависит от kind ошибки."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]), storage, FakeKufar({query.q: error}), notifier
+    )
+
+    asyncio.run(scheduler.run_pass(query))
+
+    assert notifier.texts[-1] == expected
+
+
+def _set_old_poll(storage: Storage, query: str, seconds: int) -> None:
+    """Записать last_poll в прошлом."""
+    ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    ).isoformat()
+    storage.set_last_poll(query, ts)
+
+
+def test_stale_poll_alert_and_throttle(tmp_path: Path) -> None:
+    """Старый last_poll даёт алерт, повтор в пределах 30 минут — нет."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    _set_old_poll(storage, query.q, 300)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]), storage, FakeKufar({}), notifier
+    )
+
+    asyncio.run(scheduler.check_stale_polls())
+    asyncio.run(scheduler.check_stale_polls())
+
+    assert len(notifier.texts) == 1
+    assert "Нет успешных опросов «серебро лом» 5 минут" in notifier.texts[0]
+    assert storage.get_meta(f"{STALE_ALERT_PREFIX}{query.q}") is not None
+
+
+def test_stale_fresh_and_disabled_do_not_alert(tmp_path: Path) -> None:
+    """Свежий опрос и tracking=false не дают stale-алертов."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    storage.set_last_poll(query.q, datetime.now(timezone.utc).isoformat())
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]), storage, FakeKufar({}), notifier
+    )
+
+    asyncio.run(scheduler.check_stale_polls())
+    assert notifier.texts == []
+
+    _set_old_poll(storage, query.q, 300)
+    scheduler.tracking = False
+    asyncio.run(scheduler.check_stale_polls())
+    assert notifier.texts == []
+
+
+def test_stale_recovery(tmp_path: Path) -> None:
+    """Успешный опрос после stale-алерта сбрасывает флаг и шлёт recovery."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    _set_old_poll(storage, query.q, 300)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]), storage, FakeKufar({query.q: []}), notifier
+    )
+
+    asyncio.run(scheduler.check_stale_polls())
+    asyncio.run(scheduler.run_pass(query))
+
+    assert notifier.texts[-1] == "✅ Опрос «серебро лом» восстановлен"
+    assert storage.get_meta(f"{STALE_ALERT_PREFIX}{query.q}") is None
+
+
+def test_stale_skips_unbootstrapped(tmp_path: Path) -> None:
+    """Во время bootstrap stale-алертов нет."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]), storage, FakeKufar({}), notifier
+    )
+
+    asyncio.run(scheduler.check_stale_polls())
+
+    assert notifier.texts == []
 
 
 def test_failed_bootstrap_is_retried(tmp_path: Path) -> None:

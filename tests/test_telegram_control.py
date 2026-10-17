@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from app.models import Ad
 from app.storage import Storage
 from app.telegram_control import (
     COMPLETE_TEXT,
@@ -57,6 +58,11 @@ class FakeScheduler:
         self.delay = delay
         self.calls = 0
         self._running = False
+        self.tracking = True
+        self.prevent_sleep = False
+        self.config = SimpleNamespace(
+            queries=[SimpleNamespace(q="серебро лом")]
+        )
 
     @property
     def is_manual_scan_running(self) -> bool:
@@ -170,6 +176,51 @@ def test_id_answers_any_chat(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert len(bot.sent) == 1
     assert bot.sent[0]["chat_id"] == 999
     assert bot.sent[0]["text"] == "chat_id=999, user_id=555"
+
+
+def test_status_for_admin(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """/status показывает состояние и последнюю ошибку Kufar."""
+    storage = Storage(tmp_path / "test.db")
+    storage.save(make_ad_for_status(), "серебро лом")
+    storage.set_last_poll("серебро лом", "2026-10-17T10:00:00+00:00")
+    storage.set_meta("kufar_error_active", "1")
+    storage.set_meta("kufar_error_kind", "rate_limit")
+    storage.set_meta("kufar_error_query", "серебро лом")
+    storage.set_meta("kufar_error_status", "429")
+    bot = FakeBot()
+    scheduler = FakeScheduler(storage)
+    poller = make_poller(storage, scheduler, bot)
+
+    asyncio.run(poller.handle_update(message_update(42, "/status", user_id=42)))
+
+    text = bot.sent[-1]["text"]
+    assert "Отслеживание: включено" in text
+    assert "Объявлений в базе: 1" in text
+    assert "rate_limit" in text and "429" in text
+    assert "Кулдаун скана: готов" in text
+
+
+def test_status_rejected_for_non_admin(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Чужой /status молча игнорируется."""
+    storage = Storage(tmp_path / "test.db")
+    bot = FakeBot()
+    poller = make_poller(storage, FakeScheduler(storage), bot)
+
+    asyncio.run(poller.handle_update(message_update(999, "/status", user_id=555)))
+
+    assert bot.sent == []
+
+
+def make_ad_for_status() -> Ad:
+    """Объявление для проверки ads_total."""
+    return Ad(
+        ad_id="1",
+        subject="серебро",
+        price_byn=100,
+        url="https://www.kufar.by/item/1",
+        list_time=None,
+        raw={},
+    )
 
 
 def test_non_admin_start_gets_onboarding(tmp_path) -> None:  # type: ignore[no-untyped-def]

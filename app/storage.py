@@ -290,6 +290,11 @@ class Storage:
                 (key, value),
             )
 
+    def delete_meta(self, key: str) -> None:
+        """Удалить значение из meta."""
+        with self._connection() as connection:
+            connection.execute("DELETE FROM meta WHERE key = ?", (key,))
+
     def stats(self) -> dict[str, object]:
         """Вернуть количество объявлений по запросам и время опросов."""
         with self._connection() as connection:

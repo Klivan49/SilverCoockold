@@ -17,7 +17,13 @@ from aiogram.types import (
 )
 
 from app.notifier import safe_error
-from app.scheduler import Scheduler
+from app.scheduler import (
+    KUFAR_ERROR_ACTIVE,
+    KUFAR_ERROR_KIND,
+    KUFAR_ERROR_QUERY,
+    KUFAR_ERROR_STATUS,
+    Scheduler,
+)
 from app.storage import Storage, utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -199,6 +205,13 @@ class TelegramPoller:
             )
             return
 
+        if command == "/status":
+            if self._is_admin(user_id):
+                await bot.send_message(
+                    chat_id=chat_id, text=self._status_text()
+                )
+            return
+
         if command not in {"/start", "/scan"}:
             return
 
@@ -218,6 +231,37 @@ class TelegramPoller:
             text=START_TEXT,
             reply_markup=force_scan_keyboard(),
         )
+
+    def _status_text(self) -> str:
+        """Собрать ответ /status для админа."""
+        stats = self.storage.stats()
+        last_poll = stats.get("last_poll") or {}
+        lines = [
+            "📊 SilverCoockold",
+            f"Отслеживание: {'включено' if self.scheduler.tracking else 'выключено'}",
+            "Режим сна: "
+            f"{'запрещён' if self.scheduler.prevent_sleep else 'разрешён'}",
+            f"Объявлений в базе: {stats.get('ads_total', 0)}",
+            "Последний опрос:",
+        ]
+        for query in self.scheduler.config.queries:
+            value = last_poll.get(query.q, "нет")
+            lines.append(f"  «{query.q}»: {value}")
+
+        if self.storage.get_meta(KUFAR_ERROR_ACTIVE) == "1":
+            kind = self.storage.get_meta(KUFAR_ERROR_KIND) or "?"
+            query = self.storage.get_meta(KUFAR_ERROR_QUERY) or "?"
+            status = self.storage.get_meta(KUFAR_ERROR_STATUS)
+            suffix = f", HTTP {status}" if status else ""
+            lines.append(f"Последняя ошибка Kufar: {kind}, «{query}»{suffix}")
+        else:
+            lines.append("Последняя ошибка Kufar: нет")
+
+        cooldown = self._cooldown_left()
+        lines.append(
+            f"Кулдаун скана: {cooldown} с" if cooldown else "Кулдаун скана: готов"
+        )
+        return "\n".join(lines)
 
     async def _handle_callback(self, callback: CallbackQuery) -> None:
         """Кнопка force_scan: проверка from_user.id, кулдаун и запуск."""

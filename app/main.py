@@ -15,11 +15,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from app.config import BASE_DIR, Config, ConfigError, load_config
 from app.control import DEFAULT_CONTROL_PATH
+from app.healthcheck import Healthcheck
 from app.kufar import KufarClient
 from app.notifier import Notifier
 from app.scheduler import Scheduler
 from app.status import DEFAULT_STATUS_PATH
 from app.storage import Storage
+from app.systemd_notify import SystemdNotifier
 from app.telegram_control import TelegramPoller
 
 LOG_DIR = BASE_DIR / "logs"
@@ -169,6 +171,7 @@ def run_daemon(config: Config) -> int:
         config.limits.force_scan_cooldown_sec,
         admin_ids=config.telegram_admin_ids,
     )
+    healthcheck = Healthcheck(config.healthcheck_url, scheduler)
 
     async def _run() -> None:
         stop = asyncio.Event()
@@ -184,6 +187,14 @@ def run_daemon(config: Config) -> int:
             logging.info(
                 "Telegram poller не запущен: DRY_RUN или нет токена/получателей"
             )
+        healthcheck_task: asyncio.Task[None] | None = None
+        if config.healthcheck_url:
+            healthcheck_task = asyncio.create_task(
+                healthcheck.run(), name="healthcheck"
+            )
+        systemd_task = asyncio.create_task(
+            SystemdNotifier().run(), name="systemd-notify"
+        )
 
         print("Демон запущен. Для выхода нажмите Ctrl+C.")
         try:
@@ -192,6 +203,11 @@ def run_daemon(config: Config) -> int:
             if poller_task is not None:
                 poller_task.cancel()
                 await asyncio.gather(poller_task, return_exceptions=True)
+            if healthcheck_task is not None:
+                healthcheck_task.cancel()
+                await asyncio.gather(healthcheck_task, return_exceptions=True)
+            systemd_task.cancel()
+            await asyncio.gather(systemd_task, return_exceptions=True)
             await poller.close()
             await scheduler.stop(tasks)
             await notifier.close()

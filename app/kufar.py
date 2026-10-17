@@ -42,6 +42,17 @@ DETAIL_HEADERS = {
 class KufarError(Exception):
     """Ошибка запроса к Kufar после исчерпания ретраев."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "http",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.status_code = status_code
+
 
 class KufarClient:
     """Клиент поиска Kufar с ретраями и нормализацией объявлений."""
@@ -88,7 +99,8 @@ class KufarClient:
                 if attempt > MAX_RETRIES:
                     raise KufarError(
                         f"Kufar: сеть недоступна после {MAX_RETRIES} повторов "
-                        f"(query={query!r}): {exc}"
+                        f"(query={query!r}): {exc}",
+                        kind="network",
                     ) from exc
                 delay = NETWORK_RETRY_DELAYS[attempt - 1]
                 logger.warning(
@@ -118,7 +130,13 @@ class KufarClient:
                 if attempt > MAX_RETRIES:
                     raise KufarError(
                         f"Kufar: HTTP {response.status_code} после "
-                        f"{MAX_RETRIES} повторов (query={query!r})"
+                        f"{MAX_RETRIES} повторов (query={query!r})",
+                        kind=(
+                            "rate_limit"
+                            if response.status_code == 429
+                            else "http"
+                        ),
+                        status_code=response.status_code,
                     )
                 delay = HTTP_RETRY_DELAYS[attempt - 1]
                 retry_after = response.headers.get("Retry-After")
@@ -140,7 +158,9 @@ class KufarClient:
 
             raise KufarError(
                 f"Kufar: HTTP {response.status_code} (query={query!r}), "
-                "повтор не поможет"
+                "повтор не поможет",
+                kind="http",
+                status_code=response.status_code,
             )
 
     def fetch_detail(self, url: str) -> str:
@@ -156,7 +176,8 @@ class KufarClient:
                 if attempt > MAX_RETRIES:
                     raise KufarError(
                         f"Kufar detail: сеть недоступна после {MAX_RETRIES} "
-                        f"повторов: {url}"
+                        f"повторов: {url}",
+                        kind="network",
                     ) from exc
                 delay = NETWORK_RETRY_DELAYS[attempt - 1]
                 logger.warning(
@@ -173,7 +194,13 @@ class KufarClient:
                 if attempt > MAX_RETRIES:
                     raise KufarError(
                         f"Kufar detail: HTTP {response.status_code} после "
-                        f"{MAX_RETRIES} повторов"
+                        f"{MAX_RETRIES} повторов",
+                        kind=(
+                            "rate_limit"
+                            if response.status_code == 429
+                            else "http"
+                        ),
+                        status_code=response.status_code,
                     )
                 delay = HTTP_RETRY_DELAYS[attempt - 1]
                 retry_after = response.headers.get("Retry-After")
@@ -194,25 +221,34 @@ class KufarClient:
 
             if response.status_code != 200:
                 raise KufarError(
-                    f"Kufar detail: HTTP {response.status_code}, повтор не поможет"
+                    f"Kufar detail: HTTP {response.status_code}, повтор не поможет",
+                    kind="http",
+                    status_code=response.status_code,
                 )
 
             match = NEXT_DATA_RE.search(response.text)
             if match is None:
-                raise KufarError("Kufar detail: не найден __NEXT_DATA__")
+                raise KufarError(
+                    "Kufar detail: не найден __NEXT_DATA__", kind="parse"
+                )
             try:
                 payload = json.loads(match.group(1))
                 data = payload["props"]["initialState"]["adView"]["data"]
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
                 raise KufarError(
-                    "Kufar detail: не удалось разобрать __NEXT_DATA__"
+                    "Kufar detail: не удалось разобрать __NEXT_DATA__",
+                    kind="parse",
                 ) from exc
             if not isinstance(data, dict):
-                raise KufarError("Kufar detail: неверная структура данных")
+                raise KufarError(
+                    "Kufar detail: неверная структура данных", kind="parse"
+                )
 
             body = data.get("body") or data.get("description")
             if not isinstance(body, str):
-                raise KufarError("Kufar detail: нет body/description")
+                raise KufarError(
+                    "Kufar detail: нет body/description", kind="parse"
+                )
 
             elapsed_ms = int((time.monotonic() - started) * 1000)
             logger.info(
@@ -228,15 +264,22 @@ class KufarClient:
             payload = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
             raise KufarError(
-                f"Kufar: не удалось разобрать JSON (query={query!r})"
+                f"Kufar: не удалось разобрать JSON (query={query!r})",
+                kind="parse",
             ) from exc
 
         if not isinstance(payload, dict):
-            raise KufarError(f"Kufar: ожидался объект JSON (query={query!r})")
+            raise KufarError(
+                f"Kufar: ожидался объект JSON (query={query!r})",
+                kind="parse",
+            )
 
         raw_ads = payload.get("ads")
         if not isinstance(raw_ads, list):
-            raise KufarError(f"Kufar: в ответе нет списка ads (query={query!r})")
+            raise KufarError(
+                f"Kufar: в ответе нет списка ads (query={query!r})",
+                kind="parse",
+            )
 
         ads: list[Ad] = []
         for index, raw in enumerate(raw_ads):

@@ -40,6 +40,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
     monkeypatch.setenv("TELEGRAM_CHAT_IDS", "")
     monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "")
+    monkeypatch.setenv("HEALTHCHECK_URL", "")
     monkeypatch.setenv("DB_PATH", "./data/test.db")
 
 
@@ -66,6 +67,45 @@ def test_force_scan_cooldown_validation(tmp_path: Path, value: object) -> None:
 
     with pytest.raises(ConfigError):
         load_config(write_config(tmp_path, limits))
+
+
+def test_stale_poll_sec_parsed_and_default(tmp_path: Path) -> None:
+    """stale_poll_sec читается и по умолчанию равен 180."""
+    default_config = load_config(write_config(tmp_path, base_limits()))
+    assert default_config.limits.stale_poll_sec == 180
+
+    limits = base_limits() | {"stale_poll_sec": 60}
+    config = load_config(write_config(tmp_path, limits))
+    assert config.limits.stale_poll_sec == 60
+
+
+def test_stale_poll_sec_validation(tmp_path: Path) -> None:
+    """stale_poll_sec обязан быть целым > 0."""
+    limits = base_limits() | {"stale_poll_sec": 0}
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, limits))
+
+
+def test_healthcheck_url_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HEALTHCHECK_URL сохраняется; пустое значение допустимо."""
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping")
+    config = load_config(write_config(tmp_path, base_limits()))
+    assert config.healthcheck_url == "https://hc.example/ping"
+
+    monkeypatch.setenv("HEALTHCHECK_URL", "")
+    config = load_config(write_config(tmp_path, base_limits()))
+    assert config.healthcheck_url is None
+
+
+def test_healthcheck_url_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Некорректный URL отклоняется."""
+    monkeypatch.setenv("HEALTHCHECK_URL", "ftp://example/ping")
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, base_limits()))
 
 
 def test_chat_ids_parsing_and_admin_fallback(
