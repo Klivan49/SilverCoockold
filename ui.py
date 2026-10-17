@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tkinter as tk
 import tkinter.font as tkfont
+from datetime import datetime
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from app.config import BASE_DIR
 from app.control import (
@@ -15,12 +17,22 @@ from app.control import (
     read_control,
     write_control,
 )
+from app.scrap import (
+    DEFAULT_SCRAP_PATH,
+    ScrapPrices,
+    default_scrap_prices,
+    load_scrap_prices,
+    save_scrap_prices,
+)
 from app.status import DEFAULT_STATUS_PATH, is_alive, read_status
 
 CONTROL_PATH = Path(os.getenv("CONTROL_PATH") or DEFAULT_CONTROL_PATH)
 STATUS_PATH = Path(os.getenv("STATUS_PATH") or DEFAULT_STATUS_PATH)
+SCRAP_PATH = Path(os.getenv("SCRAP_PATH") or DEFAULT_SCRAP_PATH)
 LOG_PATH = Path(os.getenv("LOG_PATH") or (BASE_DIR / "logs" / "app.log"))
 LOG_TAIL_LINES = 15
+PURITY_LIST = (999, 958, 925, 916, 900, 875, 830, 800, 750, 500)
+NO_HALLMARK_OPTIONS = (800, 875, 925)
 
 
 def read_log_tail(path: str | Path, lines: int = LOG_TAIL_LINES) -> str:
@@ -57,6 +69,7 @@ class SilverCoockoldUI:
         self.sleep_status_var = tk.StringVar()
         self.ads_var = tk.StringVar(value="Объявлений в базе: —")
         self.last_poll_var = tk.StringVar(value="Последний опрос: —")
+        self.scrap_window: ScrapPricesWindow | None = None
 
         self._build()
         self.refresh()
@@ -108,7 +121,12 @@ class SilverCoockoldUI:
             activeforeground="white",
             command=lambda: self.set_tracking(False),
         ).pack(side="left", padx=(0, 6))
-        ttk.Button(buttons, text="Обновить", command=self.refresh).pack(side="left")
+        ttk.Button(buttons, text="Обновить", command=self.refresh).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(
+            buttons, text="Цены лома", command=self.open_scrap_editor
+        ).pack(side="left")
 
         ttk.Checkbutton(
             self.root,
@@ -153,6 +171,18 @@ class SilverCoockoldUI:
         )
         self.refresh()
 
+    def open_scrap_editor(self) -> "ScrapPricesWindow":
+        """Открыть окно цен лома, не блокируя mainloop."""
+        if (
+            self.scrap_window is not None
+            and self.scrap_window.window.winfo_exists()
+        ):
+            self.scrap_window.window.lift()
+            self.scrap_window.window.focus_force()
+            return self.scrap_window
+        self.scrap_window = ScrapPricesWindow(self.root, SCRAP_PATH)
+        return self.scrap_window
+
     def refresh(self) -> None:
         """Обновить статус и хвост лога; повторять каждые 2 секунды."""
         state = read_control(CONTROL_PATH)
@@ -192,6 +222,145 @@ class SilverCoockoldUI:
         self.log_text.configure(state="disabled")
 
         self.root.after(2000, self.refresh)
+
+
+class ScrapPricesWindow:
+    """Окно редактирования цен лома по пробам."""
+
+    def __init__(self, parent: tk.Misc, path: str | Path) -> None:
+        self.path = Path(path)
+        self.data = load_scrap_prices(self.path)
+        self.entries: dict[int, tk.StringVar] = {}
+        self.no_hallmark_var = tk.StringVar()
+        self.status_var = tk.StringVar(value="")
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Цены лома, BYN/г")
+        self.window.geometry("420x460")
+        self.window.minsize(400, 420)
+        self.window.transient(parent)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self._build()
+        self._fill(self.data)
+
+    def _build(self) -> None:
+        """Собрать поля и кнопки."""
+        title_font = tkfont.nametofont("TkDefaultFont").copy()
+        title_font.configure(size=13, weight="bold")
+        tk.Label(
+            self.window, text="Цены лома, BYN/г", font=title_font
+        ).pack(anchor="w", padx=14, pady=(12, 6))
+
+        grid = ttk.LabelFrame(self.window, text="Цены по пробам")
+        grid.pack(fill="x", padx=12, pady=4)
+        for row, purity in enumerate(PURITY_LIST):
+            ttk.Label(grid, text=str(purity)).grid(
+                row=row, column=0, sticky="w", padx=(10, 6), pady=2
+            )
+            variable = tk.StringVar()
+            self.entries[purity] = variable
+            ttk.Entry(grid, textvariable=variable, width=10).grid(
+                row=row, column=1, sticky="w", pady=2
+            )
+            ttk.Label(grid, text="BYN/г").grid(
+                row=row, column=2, sticky="w", padx=(6, 10), pady=2
+            )
+
+        hall_frame = ttk.Frame(self.window)
+        hall_frame.pack(fill="x", padx=12, pady=(8, 4))
+        ttk.Label(
+            hall_frame, text="925 без клейма считать как"
+        ).pack(side="left")
+        ttk.Combobox(
+            hall_frame,
+            textvariable=self.no_hallmark_var,
+            values=[str(value) for value in NO_HALLMARK_OPTIONS],
+            state="readonly",
+            width=5,
+        ).pack(side="left", padx=(8, 4))
+        ttk.Label(hall_frame, text="проба").pack(side="left")
+
+        ttk.Label(self.window, textvariable=self.status_var).pack(
+            anchor="w", padx=16, pady=(8, 4)
+        )
+
+        actions = ttk.Frame(self.window)
+        actions.pack(fill="x", padx=12, pady=(0, 12))
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="Сохранить", command=self.save).grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Button(actions, text="Закрыть", command=self.close).grid(
+            row=0, column=1, sticky="e"
+        )
+        ttk.Button(
+            actions,
+            text="Сбросить к значениям по умолчанию",
+            command=self.reset,
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+    def _fill(self, data: ScrapPrices) -> None:
+        """Показать значения из файла/по умолчанию."""
+        for purity, variable in self.entries.items():
+            value = data.prices.get(purity)
+            variable.set("" if value is None else _format_price(value))
+        no_hallmark = data.no_hallmark_purity
+        if no_hallmark not in NO_HALLMARK_OPTIONS:
+            no_hallmark = 800
+        self.no_hallmark_var.set(str(no_hallmark))
+
+    def save(self) -> bool:
+        """Проверить поля и атомарно сохранить цены."""
+        prices: dict[int, float] = {}
+        try:
+            for purity, variable in self.entries.items():
+                raw = variable.get().strip().replace(",", ".")
+                if not raw:
+                    continue
+                value = float(raw)
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError(
+                        f"цена для пробы {purity} должна быть больше 0"
+                    )
+                prices[purity] = value
+            no_hallmark = int(self.no_hallmark_var.get())
+            if no_hallmark not in NO_HALLMARK_OPTIONS:
+                raise ValueError(
+                    "925 без клейма: выберите 800, 875 или 925"
+                )
+            save_scrap_prices(
+                self.path,
+                ScrapPrices(
+                    prices=prices, no_hallmark_purity=no_hallmark
+                ),
+            )
+        except (ValueError, OSError) as exc:
+            messagebox.showerror(
+                "Цены лома",
+                f"Не удалось сохранить: {exc}",
+                parent=self.window,
+            )
+            return False
+
+        self.status_var.set(f"Сохранено {datetime.now().strftime('%H:%M:%S')}")
+        return True
+
+    def reset(self) -> None:
+        """Заполнить поля значениями по умолчанию, не сохраняя файл."""
+        self._fill(default_scrap_prices())
+        self.status_var.set(
+            "Значения по умолчанию — нажмите «Сохранить»"
+        )
+
+    def close(self) -> None:
+        """Закрыть окно."""
+        self.window.destroy()
+
+
+def _format_price(value: float) -> str:
+    """Показать цену с запятой и без лишних нулей."""
+    return f"{value:g}".replace(".", ",")
 
 
 def main() -> None:
