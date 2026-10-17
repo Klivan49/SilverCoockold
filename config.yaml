@@ -1,0 +1,22 @@
+queries:
+  - q: "серебро лом"
+    interval: 15
+    instant: true
+    notify: true
+  - q: "серебро лот"
+    interval: 15
+    instant: true
+    notify: true
+  - q: "серебро"
+    interval: 600
+    instant: false
+    notify: false
+  - q: "серебряное"
+    interval: 600
+    instant: false
+    notify: false
+
+limits:
+  max_alerts_per_cycle: 20
+  catchup_max_age_hours: 12
+  request_timeout: 20

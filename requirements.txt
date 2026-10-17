@@ -1,0 +1,5 @@
+httpx
+aiogram>=3,<4
+PyYAML
+python-dotenv
+pytest
