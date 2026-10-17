@@ -216,6 +216,39 @@ python ui.py
 
 ---
 
+## Windows
+
+1. Установить Python 3.12 с [python.org](https://www.python.org/downloads/windows/), отметить **Add python.exe to PATH** и компонент **tcl/tk and IDLE**.
+2. Распаковать проект в любую папку — пробелы и кириллица в пути поддерживаются.
+3. Запустить `windows\install.bat`: он проверит `py -3.12`, создаст `.venv`, поставит зависимости и скопирует `.env.example` в `.env`.
+4. Заполнить `.env` (сначала можно оставить `DRY_RUN=1`):
+
+   ```env
+   TELEGRAM_BOT_TOKEN=123456789:AA...
+   TELEGRAM_CHAT_ID=123456789
+   DRY_RUN=0
+   ```
+
+5. Проверить:
+
+   ```bat
+   .venv\Scripts\activate.bat
+   python -m app --check
+   ```
+
+6. Запуск:
+
+   - `windows\start_daemon.bat` — демон в консоли;
+   - `windows\start_ui.bat` — окно UI;
+   - `windows\start_daemon_silent.vbs` — демон без окна.
+
+7. Автозапуск:
+
+   - `Win+R` → `shell:startup` → положить ярлык на `start_daemon_silent.vbs` (или `start_ui.bat`);
+   - либо Task Scheduler: триггер **At log on**, действие `wscript.exe` с полным путём к `start_daemon_silent.vbs`, «Start in» — корень проекта.
+
+---
+
 ## Режим сна
 
 Чекбокс UI или поле `prevent_sleep` в `control.json`:
