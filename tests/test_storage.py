@@ -115,6 +115,22 @@ def test_mark_instant_alerted(storage: Storage, db_path: Path) -> None:
     assert read_row(db_path, ad.ad_id)["instant_alerted"] == 1
 
 
+def test_is_instant_alerted_and_meta(storage: Storage) -> None:
+    """is_instant_alerted и произвольные ключи meta работают как ожидается."""
+    ad = make_ad()
+    storage.save(ad, "серебро лом")
+    assert storage.is_instant_alerted(ad.ad_id) is False
+
+    storage.mark_instant_alerted(ad.ad_id)
+    assert storage.is_instant_alerted(ad.ad_id) is True
+
+    assert storage.get_meta("last_429_notice_at") is None
+    storage.set_meta("last_429_notice_at", "2026-10-17T10:00:00+00:00")
+    assert storage.get_meta("last_429_notice_at") == "2026-10-17T10:00:00+00:00"
+    storage.set_meta("last_429_notice_at", "2026-10-17T10:30:00+00:00")
+    assert storage.get_meta("last_429_notice_at") == "2026-10-17T10:30:00+00:00"
+
+
 def test_stats(storage: Storage) -> None:
     """stats корректно считает объявления по запросам и последний опрос."""
     storage.save(make_ad("1", subject="A"), "серебро лом")

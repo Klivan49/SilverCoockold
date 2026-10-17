@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import logging.handlers
+import signal
 import sqlite3
 import sys
-import time
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import BASE_DIR, Config, ConfigError, load_config
+from app.kufar import KufarClient
+from app.notifier import Notifier
+from app.scheduler import Scheduler
 from app.storage import Storage
 
 LOG_DIR = BASE_DIR / "logs"
@@ -102,26 +106,60 @@ def check(config: Config) -> int:
     return 0
 
 
+def create_components(config: Config) -> tuple[Scheduler, Notifier, KufarClient]:
+    """Создать Storage, Notifier, KufarClient и Scheduler на один запуск."""
+    storage = Storage(config.db_path)
+    notifier = Notifier(
+        config.telegram_token, config.telegram_chat_id, config.dry_run
+    )
+    kufar = KufarClient(
+        timeout=config.limits.request_timeout, proxy_url=config.proxy_url
+    )
+    scheduler = Scheduler(config, kufar, storage, notifier)
+    return scheduler, notifier, kufar
+
+
 def run_once(config: Config) -> int:
-    """Один проход по запросам: заглушка шага 1, без сети."""
-    logging.info("Режим --once (заглушка шага 1, сеть не используется)")
-    print("Один проход по запросам (заглушка шага 1, сеть не используется)")
-    print_queries(config)
-    print(f"Готово: запросов {len(config.queries)}")
+    """Один проход по всем запросам, включая bootstrap."""
+    logging.info("Режим --once: один проход по всем запросам")
+    print("Один проход по всем запросам")
+    scheduler, notifier, kufar = create_components(config)
+
+    async def _run() -> None:
+        try:
+            for query in config.queries:
+                await scheduler.run_pass(query)
+        finally:
+            await notifier.close()
+            kufar.close()
+
+    asyncio.run(_run())
+    print("Готово")
     return 0
 
 
 def run_daemon(config: Config) -> int:
-    """Рабочий режим: заглушка шага 1, выход по Ctrl+C."""
-    logging.info("Демон запущен (заглушка шага 1)")
-    print("Демон запущен в режиме заглушки. Для выхода нажмите Ctrl+C.")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logging.info("Получен сигнал остановки, выход")
-        print("Остановлено.")
-        return 0
+    """Рабочий режим: циклы по запросам и корректный выход по сигналу."""
+    scheduler, notifier, kufar = create_components(config)
+
+    async def _run() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
+
+        tasks = scheduler.start()
+        print("Демон запущен. Для выхода нажмите Ctrl+C.")
+        try:
+            await stop.wait()
+        finally:
+            await scheduler.stop(tasks)
+            await notifier.close()
+            kufar.close()
+
+    asyncio.run(_run())
+    print("Остановлено.")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,10 +173,10 @@ def main(argv: list[str] | None = None) -> int:
         "--check", action="store_true", help="проверить конфиг, папки и доступ к БД"
     )
     mode.add_argument(
-        "--once", action="store_true", help="один проход по всем запросам (заглушка)"
+        "--once", action="store_true", help="один проход по всем запросам"
     )
     mode.add_argument(
-        "--daemon", action="store_true", help="рабочий режим (заглушка)"
+        "--daemon", action="store_true", help="рабочий режим с циклами опроса"
     )
     args = parser.parse_args(argv)
 

@@ -116,6 +116,14 @@ class Storage:
                 "UPDATE ads SET last_seen = ? WHERE ad_id = ?", (now, ad.ad_id)
             )
 
+    def is_instant_alerted(self, ad_id: str) -> bool:
+        """Проверить, было ли уже отправлено мгновенное уведомление."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT instant_alerted FROM ads WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        return bool(row is not None and row["instant_alerted"])
+
     def mark_instant_alerted(self, ad_id: str) -> None:
         """Пометить, что мгновенное уведомление по объявлению отправлено."""
         with self._connection() as connection:
@@ -166,6 +174,23 @@ class Storage:
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (f"last_poll:{query}", ts),
+            )
+
+    def get_meta(self, key: str) -> str | None:
+        """Прочитать произвольное значение из meta."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM meta WHERE key = ?", (key,)
+            ).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Записать произвольное значение в meta."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
             )
 
     def stats(self) -> dict[str, object]:
