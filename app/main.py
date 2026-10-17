@@ -160,6 +160,25 @@ def run_once(config: Config) -> int:
     return 0
 
 
+def install_signal_handlers(
+    loop: asyncio.AbstractEventLoop, stop: asyncio.Event
+) -> None:
+    """Повесить SIGINT/SIGTERM; на Windows add_signal_handler не работает."""
+    def request_stop(*_: object) -> None:
+        loop.call_soon_threadsafe(stop.set)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+            continue
+        except (NotImplementedError, RuntimeError):
+            pass
+        try:
+            signal.signal(sig, request_stop)
+        except (ValueError, OSError):
+            logging.debug("Не удалось установить обработчик сигнала %s", sig)
+
+
 def run_daemon(config: Config) -> int:
     """Рабочий режим: циклы, Telegram polling и выход по сигналу."""
     scheduler, notifier, kufar, storage = create_components(config)
@@ -176,8 +195,7 @@ def run_daemon(config: Config) -> int:
     async def _run() -> None:
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stop.set)
+        install_signal_handlers(loop, stop)
 
         tasks = scheduler.start()
         poller_task: asyncio.Task[None] | None = None
