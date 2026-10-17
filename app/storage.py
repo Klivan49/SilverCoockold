@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterator
 
 from app.models import Ad
+from app.silver import SilverAnalysis
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ads (
@@ -43,6 +44,25 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ad_details (
+  ad_id TEXT PRIMARY KEY,
+  body TEXT,
+  fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ad_analysis (
+  ad_id TEXT PRIMARY KEY,
+  weight_g REAL,
+  purity INTEGER,
+  effective_purity INTEGER,
+  price_byn REAL,
+  price_per_gram REAL,
+  scrap_price REAL,
+  is_below_scrap INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  parsed_at TEXT NOT NULL
 );
 """
 
@@ -174,6 +194,83 @@ class Storage:
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (f"last_poll:{query}", ts),
+            )
+
+    def get_ad_detail(self, ad_id: str) -> str | None:
+        """Прочитать сохранённое описание объявления."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT body FROM ad_details WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        return None if row is None else str(row["body"] or "")
+
+    def save_ad_detail(self, ad_id: str, body: str) -> None:
+        """Сохранить описание объявления и время загрузки."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO ad_details (ad_id, body, fetched_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(ad_id) DO UPDATE SET "
+                "body = excluded.body, fetched_at = excluded.fetched_at",
+                (ad_id, body, utc_now_iso()),
+            )
+
+    def get_analysis(self, ad_id: str) -> SilverAnalysis | None:
+        """Прочитать сохранённый разбор объявления."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM ad_analysis WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        note = str(row["note"] or "")
+        price_byn = row["price_byn"]
+        price_per_gram = row["price_per_gram"]
+        per_gram = "цена за грамм" in note or (
+            price_byn is not None
+            and price_per_gram is not None
+            and abs(float(price_byn) - float(price_per_gram)) < 1e-9
+        )
+        return SilverAnalysis(
+            weight_g=row["weight_g"],
+            purity=row["purity"],
+            effective_purity=row["effective_purity"],
+            price_byn=price_byn,
+            price_per_gram=price_per_gram,
+            scrap_price=row["scrap_price"],
+            is_below_scrap=bool(row["is_below_scrap"]),
+            per_gram_pricing=per_gram,
+            note=note,
+        )
+
+    def save_analysis(self, ad_id: str, analysis: SilverAnalysis) -> None:
+        """Сохранить разбор объявления."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO ad_analysis ("
+                "ad_id, weight_g, purity, effective_purity, price_byn, "
+                "price_per_gram, scrap_price, is_below_scrap, note, parsed_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(ad_id) DO UPDATE SET "
+                "weight_g = excluded.weight_g, purity = excluded.purity, "
+                "effective_purity = excluded.effective_purity, "
+                "price_byn = excluded.price_byn, "
+                "price_per_gram = excluded.price_per_gram, "
+                "scrap_price = excluded.scrap_price, "
+                "is_below_scrap = excluded.is_below_scrap, "
+                "note = excluded.note, parsed_at = excluded.parsed_at",
+                (
+                    ad_id,
+                    analysis.weight_g,
+                    analysis.purity,
+                    analysis.effective_purity,
+                    analysis.price_byn,
+                    analysis.price_per_gram,
+                    analysis.scrap_price,
+                    int(analysis.is_below_scrap),
+                    analysis.note,
+                    utc_now_iso(),
+                ),
             )
 
     def get_meta(self, key: str) -> str | None:

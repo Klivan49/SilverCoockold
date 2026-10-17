@@ -11,6 +11,7 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from app import notifier as notifier_module
 from app.models import Ad
 from app.notifier import Notifier, format_ad_message
+from app.silver import SilverAnalysis
 
 
 def make_ad(
@@ -69,6 +70,70 @@ def test_html_escaping() -> None:
     assert "a=1&amp;b=2" in text
     assert "<серебро>" not in text
     assert "<лом>" not in text
+
+
+def make_analysis(**kwargs: object) -> SilverAnalysis:
+    """Разбор с разумными значениями по умолчанию."""
+    values: dict[str, object] = {
+        "weight_g": 14.4,
+        "purity": 925,
+        "effective_purity": 925,
+        "price_byn": 115.06,
+        "price_per_gram": 7.99,
+        "scrap_price": 80.64,
+        "is_below_scrap": False,
+        "per_gram_pricing": False,
+        "note": "",
+    }
+    values.update(kwargs)
+    return SilverAnalysis(**values)  # type: ignore[arg-type]
+
+
+def test_analysis_lines_in_message() -> None:
+    """В сообщении есть вес, проба, цена за грамм и лом."""
+    text = format_ad_message(
+        make_ad(price_byn=11506), "серебро лом", make_analysis()
+    )
+
+    assert "⚖️ 14,4 г · 925" in text
+    assert "💰 7,99 BYN/г · лом 5,60 BYN/г" in text
+    assert "💰 НИЖЕ ЛОМА" not in text
+
+
+def test_below_scrap_prefix() -> None:
+    """Ниже лома — префикс перед текстом."""
+    text = format_ad_message(
+        make_ad(price_byn=1000), "серебро лом", make_analysis(is_below_scrap=True)
+    )
+
+    assert text.startswith("💰 НИЖЕ ЛОМА\n")
+    assert "⚖️ 14,4 г · 925" in text
+
+
+def test_per_gram_price_line() -> None:
+    """Цена за грамм отображается как BYN/г (за грамм)."""
+    analysis = make_analysis(
+        weight_g=10.0,
+        price_byn=20.0,
+        price_per_gram=20.0,
+        scrap_price=56.0,
+        per_gram_pricing=True,
+        is_below_scrap=True,
+    )
+
+    text = format_ad_message(make_ad(price_byn=2000), "серебро", analysis)
+
+    assert "— Цена: 20 BYN/г (за грамм)" in text
+    assert "20,00 BYN/г · лом 5,60 BYN/г" in text
+
+
+def test_hallmark_fallback_in_message() -> None:
+    """Показываем 925→800 при отсутствии клейма."""
+    text = format_ad_message(
+        make_ad(), "серебро", make_analysis(effective_purity=800)
+    )
+
+    assert "⚖️ 14,4 г · 925→800" in text
 
 
 def test_long_subject_is_truncated() -> None:

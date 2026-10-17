@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.models import Ad
+from app.silver import SilverAnalysis
 from app.storage import Storage
 
 
@@ -179,6 +180,67 @@ def test_log_alert(storage: Storage, db_path: Path) -> None:
     assert rows[1]["ok"] == 0
     assert rows[1]["error"] == "timeout"
     datetime.fromisoformat(rows[1]["sent_at"])
+
+
+def test_ad_details_roundtrip(storage: Storage) -> None:
+    """Описание объявления сохраняется и перезаписывается."""
+    assert storage.get_ad_detail("1") is None
+
+    storage.save_ad_detail("1", "первое описание")
+    assert storage.get_ad_detail("1") == "первое описание"
+
+    storage.save_ad_detail("1", "второе описание")
+    assert storage.get_ad_detail("1") == "второе описание"
+
+
+def test_ad_analysis_roundtrip(storage: Storage) -> None:
+    """Разбор сохраняется со всеми полями и bool-флагом."""
+    analysis = SilverAnalysis(
+        weight_g=14.4,
+        purity=925,
+        effective_purity=800,
+        price_byn=115.06,
+        price_per_gram=7.99,
+        scrap_price=72.0,
+        is_below_scrap=True,
+        per_gram_pricing=False,
+        note="925 без клейма, эффективная проба 800",
+    )
+
+    storage.save_analysis("1", analysis)
+    loaded = storage.get_analysis("1")
+
+    assert loaded is not None
+    assert loaded.weight_g == pytest.approx(14.4)
+    assert loaded.purity == 925
+    assert loaded.effective_purity == 800
+    assert loaded.price_byn == pytest.approx(115.06)
+    assert loaded.price_per_gram == pytest.approx(7.99)
+    assert loaded.scrap_price == pytest.approx(72.0)
+    assert loaded.is_below_scrap is True
+    assert loaded.per_gram_pricing is False
+    assert "925 без клейма" in loaded.note
+
+
+def test_ad_analysis_per_gram_flag_roundtrip(storage: Storage) -> None:
+    """Признак цены за грамм восстанавливается из note."""
+    analysis = SilverAnalysis(
+        weight_g=10.0,
+        purity=925,
+        effective_purity=925,
+        price_byn=20.0,
+        price_per_gram=20.0,
+        scrap_price=56.0,
+        is_below_scrap=True,
+        per_gram_pricing=True,
+        note="цена за грамм",
+    )
+
+    storage.save_analysis("2", analysis)
+
+    loaded = storage.get_analysis("2")
+    assert loaded is not None
+    assert loaded.per_gram_pricing is True
 
 
 def test_wal_mode_and_busy_timeout(storage: Storage, db_path: Path) -> None:

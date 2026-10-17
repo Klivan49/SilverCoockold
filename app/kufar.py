@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -28,6 +29,14 @@ MAX_RETRIES = 3
 HTTP_RETRY_DELAYS = (30, 60, 120)
 NETWORK_RETRY_DELAYS = (5, 15, 30)
 MAX_RETRY_AFTER = 120
+NEXT_DATA_RE = re.compile(
+    r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+    re.DOTALL,
+)
+DETAIL_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "ru-RU,ru;q=0.9",
+}
 
 
 class KufarError(Exception):
@@ -133,6 +142,83 @@ class KufarClient:
                 f"Kufar: HTTP {response.status_code} (query={query!r}), "
                 "повтор не поможет"
             )
+
+    def fetch_detail(self, url: str) -> str:
+        """Получить тело описания с detail-страницы объявления."""
+        attempt = 0
+        started = time.monotonic()
+
+        while True:
+            try:
+                response = self._client.get(url, headers=DETAIL_HEADERS)
+            except httpx.HTTPError as exc:
+                attempt += 1
+                if attempt > MAX_RETRIES:
+                    raise KufarError(
+                        f"Kufar detail: сеть недоступна после {MAX_RETRIES} "
+                        f"повторов: {url}"
+                    ) from exc
+                delay = NETWORK_RETRY_DELAYS[attempt - 1]
+                logger.warning(
+                    "Kufar detail: сетевая ошибка, повтор %d/%d через %d с",
+                    attempt,
+                    MAX_RETRIES,
+                    delay,
+                )
+                self._sleep(delay)
+                continue
+
+            if response.status_code == 429 or 500 <= response.status_code < 600:
+                attempt += 1
+                if attempt > MAX_RETRIES:
+                    raise KufarError(
+                        f"Kufar detail: HTTP {response.status_code} после "
+                        f"{MAX_RETRIES} повторов"
+                    )
+                delay = HTTP_RETRY_DELAYS[attempt - 1]
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = min(max(int(retry_after), 0), MAX_RETRY_AFTER)
+                    except ValueError:
+                        pass
+                logger.warning(
+                    "Kufar detail: HTTP %d, повтор %d/%d через %d с",
+                    response.status_code,
+                    attempt,
+                    MAX_RETRIES,
+                    delay,
+                )
+                self._sleep(delay)
+                continue
+
+            if response.status_code != 200:
+                raise KufarError(
+                    f"Kufar detail: HTTP {response.status_code}, повтор не поможет"
+                )
+
+            match = NEXT_DATA_RE.search(response.text)
+            if match is None:
+                raise KufarError("Kufar detail: не найден __NEXT_DATA__")
+            try:
+                payload = json.loads(match.group(1))
+                data = payload["props"]["initialState"]["adView"]["data"]
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                raise KufarError(
+                    "Kufar detail: не удалось разобрать __NEXT_DATA__"
+                ) from exc
+
+            body = data.get("body") or data.get("description")
+            if not isinstance(body, str):
+                raise KufarError("Kufar detail: нет body/description")
+
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                "Kufar detail: HTTP 200, символов %d, %d мс",
+                len(body),
+                elapsed_ms,
+            )
+            return body
 
     def _parse(self, response: httpx.Response, query: str) -> list[Ad]:
         """Разобрать JSON-ответ, пропуская битые объявления."""

@@ -23,6 +23,7 @@ from app.scheduler import (
     search_url,
 )
 from app.status import read_status
+from app.silver import SilverAnalysis
 from app.storage import Storage
 
 
@@ -33,9 +34,14 @@ class FakeKufar:
         self,
         responses: dict[str, list[Ad] | Exception],
         delay: float = 0.0,
+        details: dict[str, str] | None = None,
+        detail_error: Exception | None = None,
     ) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        self.detail_calls: list[str] = []
+        self.details = details or {}
+        self.detail_error = detail_error
         self.delay = delay
 
     def fetch(self, query: str) -> list[Ad]:
@@ -47,17 +53,27 @@ class FakeKufar:
             raise response
         return list(response)
 
+    def fetch_detail(self, url: str) -> str:
+        self.detail_calls.append(url)
+        if self.detail_error is not None:
+            raise self.detail_error
+        return self.details.get(url, "")
+
 
 class FakeNotifier:
     """Подделка Notifier: записывает вызовы, ничего не отправляет."""
 
     def __init__(self) -> None:
         self.ad_calls: list[tuple[Ad, str]] = []
+        self.analyses: list[object] = []
         self.texts: list[str] = []
         self.closed = False
 
-    async def send_ad(self, ad: Ad, query: str) -> bool:
+    async def send_ad(
+        self, ad: Ad, query: str, analysis: object | None = None
+    ) -> bool:
         self.ad_calls.append((ad, query))
+        self.analyses.append(analysis)
         return True
 
     async def send_text(self, text: str) -> bool:
@@ -113,12 +129,16 @@ def make_config(
     )
 
 
-def make_ad(ad_id: str = "1", list_time: str | None = None) -> Ad:
+def make_ad(
+    ad_id: str = "1",
+    list_time: str | None = None,
+    price_byn: int | None = 2499,
+) -> Ad:
     """Собрать тестовое объявление."""
     return Ad(
         ad_id=ad_id,
         subject=f"объявление {ad_id}",
-        price_byn=2499,
+        price_byn=price_byn,
         url=f"https://www.kufar.by/item/{ad_id}",
         list_time=list_time,
         raw={"ad_id": ad_id},
@@ -140,6 +160,7 @@ def make_scheduler(
         notifier,
         control_path=base / "control.json",
         status_path=base / "status.json",
+        scrap_prices_path=base / "scrap_prices.json",
         sleep_inhibitor=FakeSleep(),
     )
 
@@ -308,6 +329,158 @@ def test_failed_bootstrap_is_retried(tmp_path: Path) -> None:
     assert result.paused is True
     assert storage.is_bootstrapped(query.q) is False
     assert all("✅" not in text for text in notifier.texts)
+
+
+SCRAP_BODY = "925 проба, вес 10 г, клеймо"
+
+
+def test_below_scrap_sent_without_notify(tmp_path: Path) -> None:
+    """Ниже лома отправляется даже при notify=false."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    analysis = notifier.analyses[0]
+    assert isinstance(analysis, SilverAnalysis)
+    assert analysis.is_below_scrap is True
+    assert kufar.detail_calls == [ad.url]
+    saved = storage.get_analysis(ad.ad_id)
+    assert saved is not None and saved.is_below_scrap is True
+
+
+def test_above_scrap_not_sent_without_notify(tmp_path: Path) -> None:
+    """Выше лома при notify=false не отправляется, но разбор сохраняется."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    saved = storage.get_analysis(ad.ad_id)
+    assert saved is not None and saved.is_below_scrap is False
+
+
+def test_priority_sends_analysis_once(tmp_path: Path) -> None:
+    """Приоритетный запрос отправляет разбор один раз."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    asyncio.run(scheduler.run_pass(query))
+    asyncio.run(scheduler.run_pass(query))
+
+    assert len(notifier.ad_calls) == 1
+    assert isinstance(notifier.analyses[0], SilverAnalysis)
+    assert len(kufar.detail_calls) == 1
+
+
+def test_raw_body_skips_detail_fetch(tmp_path: Path) -> None:
+    """Если в Ad.raw уже есть body, detail не запрашивается."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000)
+    ad.raw["body"] = SCRAP_BODY
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    asyncio.run(scheduler.run_pass(query))
+
+    assert kufar.detail_calls == []
+    assert len(notifier.ad_calls) == 1
+    assert storage.get_ad_detail(ad.ad_id) == SCRAP_BODY
+
+
+def test_bootstrap_does_not_fetch_detail(tmp_path: Path) -> None:
+    """Bootstrap не тянет detail-страницы."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    ad = make_ad("1", price_byn=1000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    asyncio.run(scheduler.run_pass(query))
+
+    assert kufar.detail_calls == []
+    assert notifier.ad_calls == []
+    assert storage.get_ad_detail(ad.ad_id) is None
+
+
+def test_catchup_does_not_fetch_detail(tmp_path: Path) -> None:
+    """Старое объявление не анализируется и не тянет detail."""
+    query = make_query()
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
+    ad = make_ad("old", list_time=old_time, price_byn=1000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    asyncio.run(scheduler.run_pass(query))
+
+    assert kufar.detail_calls == []
+    assert notifier.ad_calls == []
+    assert storage.get_analysis(ad.ad_id) is None
+
+
+def test_detail_error_sends_regular_alert_without_analysis(tmp_path: Path) -> None:
+    """Ошибка detail: обычный алерт уходит без анализа и без scrap-алерта."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000)
+    kufar = FakeKufar(
+        {query.q: [ad]},
+        details={ad.url: SCRAP_BODY},
+        detail_error=KufarError("detail failed"),
+    )
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert notifier.analyses == [None]
+
+
+def test_manual_scan_uses_scrap_logic(tmp_path: Path) -> None:
+    """Ручной скан тоже отправляет лот ниже лома при notify=false."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_manual_scan())
+
+    assert result == {"new": 1, "sent": 1}
+    assert len(notifier.ad_calls) == 1
+    assert isinstance(notifier.analyses[0], SilverAnalysis)
+    assert kufar.detail_calls == [ad.url]
 
 
 def test_interval_jitter_bounds() -> None:

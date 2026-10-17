@@ -11,6 +11,7 @@ import pytest
 from app.kufar import KufarClient, KufarError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "search_lom.json"
+DETAIL_FIXTURE = Path(__file__).parent / "fixtures" / "detail_sample.html"
 
 
 def load_fixture() -> dict:
@@ -26,6 +27,57 @@ def make_client(handler, sleeps: list[float] | None = None) -> KufarClient:
         client=http_client,
         sleep=(sleeps.append if sleeps is not None else lambda _: None),
     )
+
+
+def detail_html() -> str:
+    """Прочитать HTML detail-страницы из фикстуры."""
+    return DETAIL_FIXTURE.read_text(encoding="utf-8")
+
+
+def test_fetch_detail_parses_next_data() -> None:
+    """fetch_detail достаёт body из __NEXT_DATA__."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Accept"] == "text/html,application/xhtml+xml"
+        return httpx.Response(200, text=detail_html())
+
+    body = make_client(handler).fetch_detail("https://www.kufar.by/item/1")
+
+    assert body.startswith("Серебро 925 проба.")
+    assert "Общий вес 15 г." in body
+
+
+def test_fetch_detail_retries_429() -> None:
+    """Detail-запрос повторяется на 429 с паузами."""
+    sleeps: list[float] = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429)
+        return httpx.Response(200, text=detail_html())
+
+    body = make_client(handler, sleeps).fetch_detail("https://www.kufar.by/item/1")
+
+    assert body.startswith("Серебро")
+    assert calls["n"] == 3
+    assert sleeps == [30, 60]
+
+
+def test_fetch_detail_broken_next_data() -> None:
+    """Битый JSON внутри __NEXT_DATA__ даёт KufarError."""
+
+    html = (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        "{not json}</script></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html)
+
+    with pytest.raises(KufarError):
+        make_client(handler).fetch_detail("https://www.kufar.by/item/1")
 
 
 def test_fetch_parses_fixture() -> None:

@@ -17,6 +17,8 @@ from app.control import DEFAULT_CONTROL_PATH, ControlState, read_control, write_
 from app.kufar import KufarClient, KufarError
 from app.models import Ad
 from app.notifier import Notifier
+from app.scrap import DEFAULT_SCRAP_PATH, ScrapPrices, load_scrap_prices
+from app.silver import SilverAnalysis, analyze_ad
 from app.sleep import SleepInhibitor
 from app.status import DEFAULT_STATUS_PATH, write_status
 from app.storage import Storage, utc_now_iso
@@ -74,6 +76,7 @@ class Scheduler:
         notifier: Notifier,
         control_path: str | Path | None = None,
         status_path: str | Path | None = None,
+        scrap_prices_path: str | Path | None = None,
         sleep_inhibitor: SleepInhibitor | None = None,
     ) -> None:
         self.config = config
@@ -82,6 +85,7 @@ class Scheduler:
         self.notifier = notifier
         self.control_path = Path(control_path or DEFAULT_CONTROL_PATH)
         self.status_path = Path(status_path or DEFAULT_STATUS_PATH)
+        self.scrap_prices_path = Path(scrap_prices_path or DEFAULT_SCRAP_PATH)
         self.sleep = sleep_inhibitor or SleepInhibitor()
         self._http_lock = asyncio.Lock()
         self._manual_scan_lock = asyncio.Lock()
@@ -108,6 +112,32 @@ class Scheduler:
         async with self._http_lock:
             return await asyncio.to_thread(self.kufar.fetch, query)
 
+    async def _fetch_detail(self, url: str) -> str:
+        """Загрузить detail-страницу под тем же глобальным HTTP lock."""
+        async with self._http_lock:
+            return await asyncio.to_thread(self.kufar.fetch_detail, url)
+
+    async def _get_body(self, ad: Ad) -> str | None:
+        """Взять body из кэша/raw или загрузить detail; при ошибке None."""
+        cached = self.storage.get_ad_detail(ad.ad_id)
+        if cached is not None:
+            return cached
+
+        raw_body = ad.raw.get("body") if isinstance(ad.raw, dict) else None
+        if isinstance(raw_body, str) and raw_body.strip():
+            self.storage.save_ad_detail(ad.ad_id, raw_body)
+            return raw_body
+
+        try:
+            body = await self._fetch_detail(ad.url)
+        except Exception:
+            logger.exception(
+                "Kufar detail: не удалось получить описание ad_id=%s", ad.ad_id
+            )
+            return None
+        self.storage.save_ad_detail(ad.ad_id, body)
+        return body
+
     async def run_manual_scan(self) -> dict[str, int]:
         """Один проход по всем запросам вне расписания.
 
@@ -118,6 +148,7 @@ class Scheduler:
             logger.info("Ручной скан уже выполняется, повторный запуск отклонён")
             return {"new": 0, "sent": 0}
 
+        prices = load_scrap_prices(self.scrap_prices_path)
         total_new = 0
         total_sent = 0
         async with self._manual_scan_lock:
@@ -128,7 +159,9 @@ class Scheduler:
                     )
                     continue
                 try:
-                    result = await self._regular_pass(query, ignore_tracking=True)
+                    result = await self._regular_pass(
+                        query, ignore_tracking=True, prices=prices
+                    )
                 except KufarError:
                     logger.exception(
                         "Ручной скан: Kufar не ответил по «%s»", query.q
@@ -205,21 +238,43 @@ class Scheduler:
         logger.info("Bootstrap «%s»: сохранено %d объявлений", query.q, len(ads))
         return PassResult(new=new_count)
 
+    async def _analyze_new_ad(
+        self, ad: Ad, prices: ScrapPrices
+    ) -> SilverAnalysis | None:
+        """Загрузить detail (если нужно) и сохранить разбор нового ad."""
+        body = await self._get_body(ad)
+        if body is None:
+            return None
+        try:
+            analysis = analyze_ad(ad, body, prices)
+        except Exception:
+            logger.exception("silver: не удалось разобрать ad_id=%s", ad.ad_id)
+            return None
+        self.storage.save_analysis(ad.ad_id, analysis)
+        return analysis
+
     async def _regular_pass(
-        self, query: QueryConfig, *, ignore_tracking: bool = False
+        self,
+        query: QueryConfig,
+        *,
+        ignore_tracking: bool = False,
+        prices: ScrapPrices | None = None,
     ) -> PassResult:
         """Обычный проход: сохранить новое и отправить уведомления."""
         ads = await self._fetch(query.q)
         if not ignore_tracking and not self.tracking:
             logger.info("Отслеживание выключено во время запроса «%s»", query.q)
             return PassResult()
+        if prices is None:
+            prices = load_scrap_prices(self.scrap_prices_path)
         new_count = 0
         sent = 0
         skipped = 0
         limit = self.config.limits.max_alerts_per_cycle
 
         for ad in ads:
-            if self.storage.is_new(ad.ad_id):
+            is_new = self.storage.is_new(ad.ad_id)
+            if is_new:
                 new_count += 1
             self.storage.save(ad, query.q)
 
@@ -228,14 +283,26 @@ class Scheduler:
             if is_older_than(ad, self.config.limits.catchup_max_age_hours):
                 self.storage.mark_instant_alerted(ad.ad_id)
                 continue
-            if not query.notify:
+
+            analysis: SilverAnalysis | None = None
+            if is_new:
+                analysis = await self._analyze_new_ad(ad, prices)
+            else:
+                analysis = self.storage.get_analysis(ad.ad_id)
+
+            if self.storage.is_instant_alerted(ad.ad_id):
+                continue
+            should_send = (
+                analysis is not None and analysis.is_below_scrap
+            ) or query.notify
+            if not should_send:
                 continue
             if sent >= limit:
                 self.storage.mark_instant_alerted(ad.ad_id)
                 skipped += 1
                 continue
 
-            ok = await self.notifier.send_ad(ad, query.q)
+            ok = await self.notifier.send_ad(ad, query.q, analysis)
             self.storage.mark_instant_alerted(ad.ad_id)
             self.storage.log_alert(
                 ad.ad_id,
@@ -244,6 +311,14 @@ class Scheduler:
                 error=None if ok else "не удалось отправить",
             )
             sent += 1
+            reason = (
+                "ниже лома"
+                if analysis is not None and analysis.is_below_scrap
+                else "notify"
+            )
+            logger.info(
+                "Алерт ad_id=%s, запрос «%s», причина=%s", ad.ad_id, query.q, reason
+            )
 
         if skipped:
             text = DIGEST_TEXT.format(

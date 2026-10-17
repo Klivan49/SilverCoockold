@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.models import Ad
+from app.silver import SilverAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -34,23 +35,68 @@ def scan_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def format_ad_message(ad: Ad, query: str) -> str:
+def _format_number(value: float) -> str:
+    """Число без лишних нулей, с запятой."""
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
+def _format_money(value: float) -> str:
+    """Деньги: два знака после запятой."""
+    return f"{value:.2f}".replace(".", ",")
+
+
+def format_ad_message(
+    ad: Ad, query: str, analysis: SilverAnalysis | None = None
+) -> str:
     """Собрать HTML-сообщение о новом объявлении."""
     safe_query = html.escape(query, quote=False)
     safe_subject = html.escape((ad.subject or "")[:SUBJECT_MAX_LENGTH], quote=False)
     safe_url = html.escape(ad.url, quote=False)
 
-    if ad.price_byn and ad.price_byn > 0:
+    if analysis is not None and analysis.per_gram_pricing and analysis.price_byn:
+        price_text = (
+            f"Цена: {_format_number(analysis.price_byn)} BYN/г (за грамм)"
+        )
+    elif ad.price_byn and ad.price_byn > 0:
         price = f"{ad.price_byn / 100:.2f}".replace(".", ",")
         price_text = f"{price} BYN"
     else:
         price_text = "Цена: договорная"
 
-    return (
-        f"🔥 Новое: «{safe_query}»\n"
-        f"{safe_subject} — {price_text}\n"
-        f"{safe_url}"
-    )
+    lines = [
+        f"🔥 Новое: «{safe_query}»",
+        f"{safe_subject} — {price_text}",
+    ]
+    if analysis is not None and analysis.weight_g is not None:
+        purity_text = "—"
+        if analysis.purity is not None:
+            purity_text = str(analysis.purity)
+            if (
+                analysis.effective_purity is not None
+                and analysis.effective_purity != analysis.purity
+            ):
+                purity_text += f"→{analysis.effective_purity}"
+        lines.append(
+            f"⚖️ {_format_number(analysis.weight_g)} г · {purity_text}"
+        )
+    if (
+        analysis is not None
+        and analysis.price_per_gram is not None
+        and analysis.scrap_price is not None
+        and analysis.weight_g
+    ):
+        scrap_per_gram = analysis.scrap_price / analysis.weight_g
+        lines.append(
+            f"💰 {_format_money(analysis.price_per_gram)} BYN/г · "
+            f"лом {_format_money(scrap_per_gram)} BYN/г"
+        )
+    lines.append(safe_url)
+
+    text = "\n".join(lines)
+    if analysis is not None and analysis.is_below_scrap:
+        text = "💰 НИЖЕ ЛОМА\n" + text
+    return text
 
 
 def safe_error(exc: BaseException, token: str | None) -> str:
@@ -84,10 +130,13 @@ class Notifier:
             self._bot = Bot(token=self._token)
         return self._bot
 
-    async def send_ad(self, ad: Ad, query: str) -> bool:
+    async def send_ad(
+        self, ad: Ad, query: str, analysis: SilverAnalysis | None = None
+    ) -> bool:
         """Отправить уведомление о новом объявлении с кнопкой скана."""
         return await self.send_text(
-            format_ad_message(ad, query), reply_markup=scan_keyboard()
+            format_ad_message(ad, query, analysis),
+            reply_markup=scan_keyboard(),
         )
 
     async def send_text(
