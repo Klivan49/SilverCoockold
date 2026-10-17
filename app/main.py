@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import BASE_DIR, Config, ConfigError, load_config
+from app.storage import Storage
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_FILE = LOG_DIR / "app.log"
@@ -65,11 +66,13 @@ def print_queries(config: Config) -> None:
 
 
 def check(config: Config) -> int:
-    """Проверить конфиг, создать рабочие папки и открыть файл БД."""
-    config.db_path.parent.mkdir(parents=True, exist_ok=True)
+    """Проверить конфиг, создать БД со схемой и показать статистику."""
     try:
-        connection = sqlite3.connect(config.db_path)
-        connection.close()
+        storage = Storage(config.db_path)
+        ads_total = int(storage.stats()["ads_total"])
+        bootstrapped = {
+            query.q: storage.is_bootstrapped(query.q) for query in config.queries
+        }
     except sqlite3.Error as exc:
         print(f"Ошибка БД {config.db_path}: {exc}", file=sys.stderr)
         return 1
@@ -84,6 +87,11 @@ def check(config: Config) -> int:
         f"request_timeout={config.limits.request_timeout:g} с"
     )
     print(f"БД: {config.db_path}")
+    print(f"Объявлений в базе: {ads_total}")
+    print("Bootstrap по запросам:")
+    for query in config.queries:
+        mark = "да" if bootstrapped[query.q] else "нет"
+        print(f"  - «{query.q}»: bootstrapped={mark}")
     print(f"Логи: {LOG_FILE}")
     print(f"Telegram bot token: {mask_secret(config.telegram_token)}")
     print(f"Telegram chat_id: {mask_secret(config.telegram_chat_id)}")
