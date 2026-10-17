@@ -675,7 +675,7 @@ docker compose exec silverwatch python -m app --check
 .venv/bin/python -m pytest -q
 ```
 
-Ожидаемо: **77 passed**.
+Ожидаемо: **175 passed**.
 
 Проверяются:
 
