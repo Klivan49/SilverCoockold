@@ -1,0 +1,8 @@
+[Unit]
+Description=SilverCoockold failure alert
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/SilverCoockold
+ExecStart=/opt/SilverCoockold/.venv/bin/python /opt/SilverCoockold/scripts/send_alert.py
+EnvironmentFile=-/opt/SilverCoockold/.env

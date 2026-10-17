@@ -1,12 +1,15 @@
 [Unit]
 Description=SilverCoockold
 After=network-online.target
+OnFailure=silverwatch-alert.service
 
 [Service]
+Type=notify
 WorkingDirectory=/opt/SilverCoockold
 ExecStart=/opt/SilverCoockold/.venv/bin/python -m app --daemon
 Restart=always
 RestartSec=5
+WatchdogSec=120
 EnvironmentFile=/opt/SilverCoockold/.env
 
 [Install]

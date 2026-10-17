@@ -316,6 +316,15 @@ https://www.kufar.by/item/...
 - **healthchecks.io:** создать Check, скопировать Ping URL, указать его в `HEALTHCHECK_URL`, перезапустить демон.
 - **Uptime Kuma:** создать Push-монитор и указать его Push URL в `HEALTHCHECK_URL`.
 
+### systemd watchdog и падение сервиса
+
+- Приложение отправляет `READY=1` при старте и `WATCHDOG=1` каждые 30 секунд через `$NOTIFY_SOCKET`.
+- В unit включены `Type=notify`, `WatchdogSec=120` и `OnFailure=silverwatch-alert.service`.
+- Если процесс завис или упал, systemd перезапускает его (`Restart=always`), а `OnFailure` запускает `scripts/send_alert.py`.
+- Алерт `⚠️ SilverCoockold: сервис упал или завис` уходит во все `TELEGRAM_CHAT_IDS`; ошибки отправки только пишутся в лог.
+- Готовые unit-файлы для VPS: `deploy/silverwatch.service` и `deploy/silverwatch-alert.service`.
+- Внешний healthcheck (`HEALTHCHECK_URL`) дополняет это: он заметит проблему, даже если systemd не смог перезапустить сервис.
+
 ---
 
 ## Ниже лома
@@ -526,19 +535,38 @@ cat > ~/.config/systemd/user/silverwatch.service <<'EOF'
 Description=SilverCoockold — мониторинг серебра на Kufar
 After=network-online.target
 Wants=network-online.target
+OnFailure=silverwatch-alert.service
 
 [Service]
-Type=simple
+Type=notify
 WorkingDirectory=%h/Документы/SilverCoockold
 ExecStart=%h/Документы/SilverCoockold/.venv/bin/python -m app --daemon
 EnvironmentFile=%h/Документы/SilverCoockold/.env
 Restart=always
 RestartSec=5
+WatchdogSec=120
 
 [Install]
 WantedBy=default.target
 EOF
 ```
+
+Создай companion unit для алерта при падении/зависании:
+
+```bash
+cat > ~/.config/systemd/user/silverwatch-alert.service <<'EOF'
+[Unit]
+Description=SilverCoockold failure alert
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Документы/SilverCoockold
+ExecStart=%h/Документы/SilverCoockold/.venv/bin/python %h/Документы/SilverCoockold/scripts/send_alert.py
+EnvironmentFile=-%h/Документы/SilverCoockold/.env
+EOF
+```
+
+`Type=notify` ждёт `READY=1` от приложения; `WATCHDOG=1` отправляется каждые 30 секунд, а `WatchdogSec=120` перезапускает зависший сервис. `OnFailure` вызывает `silverwatch-alert.service`, которая отправляет алерт во все `TELEGRAM_CHAT_IDS`.
 
 Включи:
 
