@@ -38,6 +38,8 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DRY_RUN", "1")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
+    monkeypatch.setenv("TELEGRAM_CHAT_IDS", "")
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "")
     monkeypatch.setenv("DB_PATH", "./data/test.db")
 
 
@@ -64,3 +66,62 @@ def test_force_scan_cooldown_validation(tmp_path: Path, value: object) -> None:
 
     with pytest.raises(ConfigError):
         load_config(write_config(tmp_path, limits))
+
+
+def test_chat_ids_parsing_and_admin_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Списки парсятся с пробелами, пустыми элементами и fallback админов."""
+    monkeypatch.setenv("TELEGRAM_CHAT_IDS", " 111, 222 ,,333 ")
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.telegram_chat_ids == ["111", "222", "333"]
+    assert config.telegram_admin_ids == ["111", "222", "333"]
+    assert config.telegram_chat_id == "111"
+
+
+def test_admin_ids_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Отдельный список админов сохраняется."""
+    monkeypatch.setenv("TELEGRAM_CHAT_IDS", "111,222")
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", " 222 ")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.telegram_chat_ids == ["111", "222"]
+    assert config.telegram_admin_ids == ["222"]
+
+
+def test_legacy_chat_id_compatibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Если новых списков нет, используется старый TELEGRAM_CHAT_ID."""
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "987654321")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.telegram_chat_ids == ["987654321"]
+    assert config.telegram_admin_ids == ["987654321"]
+    assert config.telegram_chat_id == "987654321"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TELEGRAM_CHAT_IDS", "111,abc"),
+        ("TELEGRAM_ADMIN_IDS", "0"),
+    ],
+)
+def test_invalid_id_lists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    """Нечисловые и нулевые ID отклоняются."""
+    monkeypatch.setenv("TELEGRAM_CHAT_IDS", "111")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, base_limits()))

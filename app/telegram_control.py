@@ -27,6 +27,23 @@ LAST_FORCE_SCAN_KEY = "last_force_scan_at"
 FORCE_SCAN_BUTTON_TEXT = "🔄 Принудительный скан"
 START_TEXT = "SilverCoockold на связи. Нажмите кнопку, чтобы запустить скан."
 COMPLETE_TEXT = "Скан завершён: новых {new}, отправлено {sent}"
+ONBOARD_TEXT = (
+    "Ваш chat_id={chat_id}, user_id={user_id}. "
+    "Передайте эти данные владельцу — он добавит вас в списки и перезапустит бота."
+)
+
+
+def _normalize_ids(values: list[str] | str | None) -> list[str]:
+    """Привести список/строку ID к списку без пустых и повторов."""
+    if values is None:
+        return []
+    raw = [values] if isinstance(values, str) else list(values)
+    result: list[str] = []
+    for value in raw:
+        normalized = str(value).strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
 
 
 def force_scan_keyboard() -> InlineKeyboardMarkup:
@@ -49,14 +66,22 @@ class TelegramPoller:
     def __init__(
         self,
         token: str | None,
-        chat_id: str | None,
-        scheduler: Scheduler,
-        storage: Storage,
-        cooldown_sec: int,
+        chat_ids: list[str] | str | None = None,
+        scheduler: Scheduler | None = None,
+        storage: Storage | None = None,
+        cooldown_sec: int = 300,
         bot: Bot | None = None,
+        *,
+        chat_id: str | None = None,
+        admin_ids: list[str] | str | None = None,
     ) -> None:
         self._token = token
-        self._chat_id = chat_id
+        self._chat_ids = _normalize_ids(chat_ids)
+        if chat_id is not None:
+            self._chat_ids = _normalize_ids([*self._chat_ids, chat_id])
+        self._admin_ids = _normalize_ids(admin_ids) or list(self._chat_ids)
+        if scheduler is None or storage is None:
+            raise ValueError("scheduler и storage обязательны")
         self.scheduler = scheduler
         self.storage = storage
         self.cooldown_sec = cooldown_sec
@@ -73,9 +98,9 @@ class TelegramPoller:
             self._bot = Bot(token=self._token)
         return self._bot
 
-    def _is_allowed(self, chat_id: object) -> bool:
-        """Разрешён ли чат."""
-        return self._chat_id is not None and str(chat_id) == str(self._chat_id)
+    def _is_admin(self, user_id: object) -> bool:
+        """Разрешён ли пользователь (по user_id, не по chat_id)."""
+        return user_id is not None and str(user_id) in self._admin_ids
 
     def _cooldown_left(self) -> int:
         """Сколько секунд осталось до конца кулдауна."""
@@ -102,8 +127,8 @@ class TelegramPoller:
 
     async def run(self) -> None:
         """Бесконечный long polling."""
-        if not self._token or not self._chat_id:
-            logger.info("Telegram poller не запущен: нет токена или chat_id")
+        if not self._token:
+            logger.info("Telegram poller не запущен: нет токена")
             return
 
         bot = self._get_bot()
@@ -158,31 +183,56 @@ class TelegramPoller:
             await self._handle_callback(callback)
 
     async def _handle_message(self, message: Message) -> None:
-        """/start и /scan: показать кнопку скана."""
+        """/id — всем, /start и /scan — только админам."""
         text = message.text or ""
         if not text:
             return
         command = text.split()[0].split("@")[0]
-        if command not in {"/start", "/scan"}:
-            return
-        if not self._is_allowed(message.chat.id):
+        chat_id = message.chat.id
+        user_id = message.from_user.id if message.from_user is not None else None
+        bot = self._get_bot()
+
+        if command == "/id":
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"chat_id={chat_id}, user_id={user_id if user_id is not None else '—'}",
+            )
             return
 
-        await self._get_bot().send_message(
-            chat_id=self._chat_id,
+        if command not in {"/start", "/scan"}:
+            return
+
+        if not self._is_admin(user_id):
+            if command == "/start":
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=ONBOARD_TEXT.format(
+                        chat_id=chat_id,
+                        user_id=user_id if user_id is not None else "—",
+                    ),
+                )
+            return
+
+        await bot.send_message(
+            chat_id=chat_id,
             text=START_TEXT,
             reply_markup=force_scan_keyboard(),
         )
 
     async def _handle_callback(self, callback: CallbackQuery) -> None:
-        """Кнопка force_scan: кулдаун, защита от параллельного скана, запуск."""
-        message = callback.message
-        chat_id = message.chat.id if message is not None else None
-        if not self._is_allowed(chat_id):
-            return
+        """Кнопка force_scan: проверка from_user.id, кулдаун и запуск."""
         if callback.data != CALLBACK_FORCE_SCAN:
             return
+        user_id = (
+            callback.from_user.id
+            if callback.from_user is not None
+            else None
+        )
+        if not self._is_admin(user_id):
+            return
 
+        message = callback.message
+        chat_id = message.chat.id if message is not None else user_id
         bot = self._get_bot()
 
         if self._scan_running():
@@ -205,15 +255,15 @@ class TelegramPoller:
         self.storage.set_meta(LAST_FORCE_SCAN_KEY, utc_now_iso())
         await bot.answer_callback_query(callback.id, text="Скан запущен")
         self._scan_task = asyncio.create_task(
-            self._run_scan(bot), name="force-scan"
+            self._run_scan(bot, chat_id), name="force-scan"
         )
 
-    async def _run_scan(self, bot: Bot) -> None:
-        """Выполнить ручной скан и отправить итог."""
+    async def _run_scan(self, bot: Bot, chat_id: object) -> None:
+        """Выполнить ручной скан и отправить итог в чат нажатия."""
         try:
             result = await self.scheduler.run_manual_scan()
             await bot.send_message(
-                chat_id=self._chat_id,
+                chat_id=chat_id,
                 text=COMPLETE_TEXT.format(
                     new=result.get("new", 0), sent=result.get("sent", 0)
                 ),
@@ -227,7 +277,7 @@ class TelegramPoller:
             )
             try:
                 await bot.send_message(
-                    chat_id=self._chat_id,
+                    chat_id=chat_id,
                     text="Скан завершился с ошибкой, подробности в логе.",
                 )
             except Exception as send_exc:

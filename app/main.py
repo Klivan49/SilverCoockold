@@ -104,7 +104,10 @@ def check(config: Config) -> int:
         print(f"  - «{query.q}»: bootstrapped={mark}")
     print(f"Логи: {LOG_FILE}")
     print(f"Telegram bot token: {mask_secret(config.telegram_token)}")
-    print(f"Telegram chat_id: {mask_secret(config.telegram_chat_id)}")
+    print(
+        f"Telegram получателей: {len(config.telegram_chat_ids)}; "
+        f"админов: {len(config.telegram_admin_ids)}"
+    )
     print(f"DRY_RUN: {'1' if config.dry_run else '0'}")
     print(f"LOG_LEVEL: {config.log_level}")
     print(f"PROXY_URL: {mask_proxy(config.proxy_url)}")
@@ -118,7 +121,7 @@ def create_components(
     """Создать Storage, Notifier, KufarClient и Scheduler на один запуск."""
     storage = Storage(config.db_path)
     notifier = Notifier(
-        config.telegram_token, config.telegram_chat_id, config.dry_run
+        config.telegram_token, config.telegram_chat_ids, config.dry_run
     )
     kufar = KufarClient(
         timeout=config.limits.request_timeout, proxy_url=config.proxy_url
@@ -160,10 +163,11 @@ def run_daemon(config: Config) -> int:
     scheduler, notifier, kufar, storage = create_components(config)
     poller = TelegramPoller(
         config.telegram_token,
-        config.telegram_chat_id,
+        config.telegram_chat_ids,
         scheduler,
         storage,
         config.limits.force_scan_cooldown_sec,
+        admin_ids=config.telegram_admin_ids,
     )
 
     async def _run() -> None:
@@ -174,11 +178,11 @@ def run_daemon(config: Config) -> int:
 
         tasks = scheduler.start()
         poller_task: asyncio.Task[None] | None = None
-        if not config.dry_run and config.telegram_token and config.telegram_chat_id:
+        if not config.dry_run and config.telegram_token and config.telegram_chat_ids:
             poller_task = asyncio.create_task(poller.run(), name="telegram")
         else:
             logging.info(
-                "Telegram poller не запущен: DRY_RUN или нет токена/chat_id"
+                "Telegram poller не запущен: DRY_RUN или нет токена/получателей"
             )
 
         print("Демон запущен. Для выхода нажмите Ctrl+C.")

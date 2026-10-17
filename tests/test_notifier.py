@@ -249,9 +249,46 @@ def test_network_error_returns_false_and_hides_token(
         result = asyncio.run(notifier.send_text("тест"))
 
     assert result is False
-    assert "Telegram: отправка не удалась" in caplog.text
+    assert "chat_id=42" in caplog.text
     assert "123456:secret-token" not in caplog.text
     assert "bot***" in caplog.text
+
+
+class ChatFailBot:
+    """Подделка Bot, падающая только для одного chat_id."""
+
+    def __init__(self, fail_chat: str) -> None:
+        self.fail_chat = fail_chat
+        self.calls: list[str] = []
+
+    async def send_message(self, **kwargs: object) -> object:
+        chat_id = str(kwargs["chat_id"])
+        if chat_id == self.fail_chat:
+            raise TelegramNetworkError(None, "chat is unavailable")  # type: ignore[arg-type]
+        self.calls.append(chat_id)
+        return object()
+
+
+def test_multiple_recipients_one_failure_does_not_block_others() -> None:
+    """Ошибка одного получателя не мешает отправить остальным."""
+    notifier = Notifier(token="123456:secret-token", chat_ids=["1", "2", "3"], dry_run=False)
+    fake = ChatFailBot(fail_chat="2")
+    notifier._bot = fake  # type: ignore[assignment]
+
+    result = asyncio.run(notifier.send_text("тест"))
+
+    assert result is False
+    assert fake.calls == ["1", "3"]
+
+
+def test_multiple_recipients_all_success() -> None:
+    """Успешная отправка возвращает True для всех получателей."""
+    notifier = Notifier(token="123456:secret-token", chat_ids=["1", "2"], dry_run=False)
+    fake = ChatFailBot(fail_chat="none")
+    notifier._bot = fake  # type: ignore[assignment]
+
+    assert asyncio.run(notifier.send_text("тест")) is True
+    assert fake.calls == ["1", "2"]
 
 
 def test_close_without_bot_is_safe() -> None:

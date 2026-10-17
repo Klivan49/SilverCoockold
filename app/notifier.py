@@ -111,16 +111,35 @@ def safe_error(exc: BaseException, token: str | None) -> str:
 class Notifier:
     """Отправка сообщений в Telegram или запись в лог при DRY_RUN."""
 
-    def __init__(self, token: str | None, chat_id: str | None, dry_run: bool) -> None:
+    def __init__(
+        self,
+        token: str | None,
+        chat_ids: list[str] | str | None = None,
+        dry_run: bool = True,
+        *,
+        chat_id: str | None = None,
+    ) -> None:
         """Запомнить настройки; Bot создаётся только при первой отправке."""
         self._token = token
-        self._chat_id = chat_id
+        raw_ids: list[str] = []
+        if isinstance(chat_ids, str):
+            raw_ids.append(chat_ids)
+        elif chat_ids:
+            raw_ids.extend(str(value) for value in chat_ids)
+        if chat_id is not None:
+            raw_ids.append(str(chat_id))
+        self._chat_ids: list[str] = []
+        for value in raw_ids:
+            normalized = value.strip()
+            if normalized and normalized not in self._chat_ids:
+                self._chat_ids.append(normalized)
+        self._chat_id = self._chat_ids[0] if self._chat_ids else None
         self._dry_run = dry_run
         self._bot: Bot | None = None
 
     def _is_dry_run(self) -> bool:
-        """Dry-run включается флагом или отсутствием токена/chat_id."""
-        return self._dry_run or not self._token or not self._chat_id
+        """Dry-run включается флагом или отсутствием токена/получателей."""
+        return self._dry_run or not self._token or not self._chat_ids
 
     def _get_bot(self) -> Bot:
         """Лениво создать Bot при первой реальной отправке."""
@@ -148,26 +167,44 @@ class Notifier:
             return True
 
         bot = self._get_bot()
+        results = []
+        for chat_id in self._chat_ids:
+            results.append(await self._send_to(bot, chat_id, text, reply_markup))
+        return all(results)
+
+    async def _send_to(
+        self,
+        bot: Bot,
+        chat_id: str,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None,
+    ) -> bool:
+        """Отправить одному получателю; ошибка не мешает остальным."""
         try:
-            await self._send(bot, text, reply_markup)
+            await self._send(bot, chat_id, text, reply_markup)
             return True
         except TelegramRetryAfter as exc:
             logger.warning(
-                "Telegram: flood control, повтор через %s с", exc.retry_after
+                "Telegram: flood control для chat_id=%s, повтор через %s с",
+                chat_id,
+                exc.retry_after,
             )
             await asyncio.sleep(exc.retry_after)
         except (TelegramAPIError, OSError) as exc:
             logger.error(
-                "Telegram: отправка не удалась: %s", safe_error(exc, self._token)
+                "Telegram: отправка в chat_id=%s не удалась: %s",
+                chat_id,
+                safe_error(exc, self._token),
             )
             return False
 
         try:
-            await self._send(bot, text, reply_markup)
+            await self._send(bot, chat_id, text, reply_markup)
             return True
         except (TelegramAPIError, OSError) as exc:
             logger.error(
-                "Telegram: повторная отправка не удалась: %s",
+                "Telegram: повторная отправка в chat_id=%s не удалась: %s",
+                chat_id,
                 safe_error(exc, self._token),
             )
             return False
@@ -175,12 +212,13 @@ class Notifier:
     async def _send(
         self,
         bot: Bot,
+        chat_id: str,
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
         """Вызвать sendMessage с HTML, без превью ссылки и с клавиатурой."""
         await bot.send_message(
-            chat_id=self._chat_id,
+            chat_id=chat_id,
             text=text,
             parse_mode="HTML",
             disable_web_page_preview=True,

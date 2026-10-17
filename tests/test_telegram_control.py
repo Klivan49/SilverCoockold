@@ -73,12 +73,18 @@ class FakeScheduler:
             self._running = False
 
 
-def message_update(chat_id: int, text: str, update_id: int = 1) -> Any:
+def message_update(
+    chat_id: int,
+    text: str,
+    update_id: int = 1,
+    user_id: int | None = None,
+) -> Any:
     """Собрать update с сообщением."""
     return SimpleNamespace(
         update_id=update_id,
         message=SimpleNamespace(
             chat=SimpleNamespace(id=chat_id),
+            from_user=SimpleNamespace(id=user_id if user_id is not None else chat_id),
             text=text,
         ),
         callback_query=None,
@@ -86,7 +92,11 @@ def message_update(chat_id: int, text: str, update_id: int = 1) -> Any:
 
 
 def callback_update(
-    chat_id: int, data: str = "force_scan", callback_id: str = "cb1", update_id: int = 2
+    chat_id: int,
+    data: str = "force_scan",
+    callback_id: str = "cb1",
+    update_id: int = 2,
+    user_id: int | None = None,
 ) -> Any:
     """Собрать update с callback_query."""
     return SimpleNamespace(
@@ -95,6 +105,7 @@ def callback_update(
         callback_query=SimpleNamespace(
             id=callback_id,
             data=data,
+            from_user=SimpleNamespace(id=user_id if user_id is not None else chat_id),
             message=SimpleNamespace(chat=SimpleNamespace(id=chat_id)),
         ),
     )
@@ -105,11 +116,14 @@ def make_poller(
     scheduler: FakeScheduler,
     bot: FakeBot,
     cooldown: int = 300,
+    chat_ids: list[str] | None = None,
+    admin_ids: list[str] | None = None,
 ) -> TelegramPoller:
     """Собрать poller на подделках."""
     return TelegramPoller(
         token="123456:test-token",
-        chat_id="42",
+        chat_ids=chat_ids or ["42"],
+        admin_ids=admin_ids or ["42"],
         scheduler=scheduler,  # type: ignore[arg-type]
         storage=storage,
         cooldown_sec=cooldown,
@@ -145,19 +159,74 @@ def test_scan_command_sends_keyboard(tmp_path) -> None:  # type: ignore[no-untyp
     assert bot.sent[0]["reply_markup"] is not None
 
 
-def test_foreign_chat_is_ignored(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """Чужой chat_id молча игнорируется и для сообщений, и для callback."""
+def test_id_answers_any_chat(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """/id доступен любому чату и возвращает chat_id/user_id."""
+    storage = Storage(tmp_path / "test.db")
+    bot = FakeBot()
+    poller = make_poller(storage, FakeScheduler(storage), bot)
+
+    asyncio.run(poller.handle_update(message_update(999, "/id", user_id=555)))
+
+    assert len(bot.sent) == 1
+    assert bot.sent[0]["chat_id"] == 999
+    assert bot.sent[0]["text"] == "chat_id=999, user_id=555"
+
+
+def test_non_admin_start_gets_onboarding(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Чужой /start получает свои ID, но не подписывается и не видит кнопку."""
     storage = Storage(tmp_path / "test.db")
     bot = FakeBot()
     scheduler = FakeScheduler(storage)
     poller = make_poller(storage, scheduler, bot)
 
-    asyncio.run(poller.handle_update(message_update(999, "/start")))
-    asyncio.run(poller.handle_update(callback_update(999)))
+    asyncio.run(poller.handle_update(message_update(999, "/start", user_id=555)))
+    asyncio.run(poller.handle_update(message_update(999, "/scan", user_id=555)))
+    asyncio.run(poller.handle_update(callback_update(999, user_id=555)))
 
-    assert bot.sent == []
+    assert len(bot.sent) == 1
+    assert "Ваш chat_id=999, user_id=555" in bot.sent[0]["text"]
+    assert "Передайте" in bot.sent[0]["text"]
+    assert "reply_markup" not in bot.sent[0]
     assert bot.answers == []
     assert scheduler.calls == 0
+
+
+def test_admin_callback_from_foreign_chat(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Админ может нажать кнопку в чужом чате; итог уходит в этот чат."""
+    storage = Storage(tmp_path / "test.db")
+    bot = FakeBot()
+    scheduler = FakeScheduler(storage)
+    poller = make_poller(
+        storage, scheduler, bot, chat_ids=["42"], admin_ids=["42"]
+    )
+
+    async def scenario() -> None:
+        await poller.handle_update(
+            callback_update(999, user_id=42, callback_id="cb-foreign")
+        )
+        assert poller._scan_task is not None
+        await poller._scan_task
+
+    asyncio.run(scenario())
+
+    assert scheduler.calls == 1
+    assert bot.answers[-1]["id"] == "cb-foreign"
+    assert bot.sent[-1]["chat_id"] == 999
+    assert bot.sent[-1]["text"] == COMPLETE_TEXT.format(new=1, sent=2)
+
+
+def test_non_admin_callback_is_rejected(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Пользователь вне admin_ids не запускает скан даже из чата админа."""
+    storage = Storage(tmp_path / "test.db")
+    bot = FakeBot()
+    scheduler = FakeScheduler(storage)
+    poller = make_poller(storage, scheduler, bot)
+
+    asyncio.run(poller.handle_update(callback_update(42, user_id=999)))
+
+    assert scheduler.calls == 0
+    assert bot.answers == []
+    assert poller._scan_task is None
 
 
 def test_force_scan_runs_once(tmp_path) -> None:  # type: ignore[no-untyped-def]

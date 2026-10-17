@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +55,8 @@ class Config:
     dry_run: bool
     log_level: str
     proxy_url: str | None
+    telegram_chat_ids: list[str] = field(default_factory=list)
+    telegram_admin_ids: list[str] = field(default_factory=list)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -133,6 +135,29 @@ def _parse_limits(raw: Any) -> LimitsConfig:
     )
 
 
+def _parse_id_list(value: str | None, name: str) -> list[str]:
+    """Разобрать список ID через запятую: пробелы и пустые элементы допустимы."""
+    if value is None or not value.strip():
+        return []
+    result: list[str] = []
+    for part in value.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            numeric = int(item)
+        except ValueError as exc:
+            raise ConfigError(
+                f"{name}: ожидается числовой ID, получено {item!r}"
+            ) from exc
+        if numeric == 0:
+            raise ConfigError(f"{name}: ID не может быть нулём")
+        normalized = str(numeric)
+        if normalized not in result:
+            result.append(normalized)
+    return result
+
+
 def _parse_bool(value: str | None, default: bool) -> bool:
     """Разобрать булево значение из env: 1/0, true/false, yes/no, on/off."""
     if value is None or not value.strip():
@@ -156,7 +181,22 @@ def load_config(config_path: Path | None = None) -> Config:
     limits = _parse_limits(data.get("limits"))
 
     token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
-    chat_id = (os.getenv("TELEGRAM_CHAT_ID") or "").strip() or None
+    legacy_chat_ids = _parse_id_list(
+        os.getenv("TELEGRAM_CHAT_ID"), "TELEGRAM_CHAT_ID"
+    )
+    chat_ids = _parse_id_list(
+        os.getenv("TELEGRAM_CHAT_IDS"), "TELEGRAM_CHAT_IDS"
+    )
+    if not chat_ids:
+        chat_ids = legacy_chat_ids
+    admin_ids = _parse_id_list(
+        os.getenv("TELEGRAM_ADMIN_IDS"), "TELEGRAM_ADMIN_IDS"
+    )
+    if not admin_ids:
+        admin_ids = list(chat_ids)
+    chat_id = legacy_chat_ids[0] if legacy_chat_ids else (
+        chat_ids[0] if chat_ids else None
+    )
     dry_run = _parse_bool(os.getenv("DRY_RUN"), default=True)
 
     log_level = (os.getenv("LOG_LEVEL") or "INFO").strip().upper()
@@ -171,9 +211,12 @@ def load_config(config_path: Path | None = None) -> Config:
 
     proxy_url = (os.getenv("PROXY_URL") or "").strip() or None
 
-    if not dry_run and (token is None or chat_id is None):
+    if not dry_run and token is None:
+        raise ConfigError("при DRY_RUN=0 обязателен TELEGRAM_BOT_TOKEN")
+    if not dry_run and not chat_ids:
         raise ConfigError(
-            "при DRY_RUN=0 обязательны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID"
+            "при DRY_RUN=0 нужен хотя бы один получатель: "
+            "TELEGRAM_CHAT_IDS или TELEGRAM_CHAT_ID"
         )
 
     return Config(
@@ -185,4 +228,6 @@ def load_config(config_path: Path | None = None) -> Config:
         dry_run=dry_run,
         log_level=log_level,
         proxy_url=proxy_url,
+        telegram_chat_ids=chat_ids,
+        telegram_admin_ids=admin_ids,
     )
