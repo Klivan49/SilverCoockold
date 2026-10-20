@@ -108,6 +108,35 @@ def test_healthcheck_url_validation(
         load_config(write_config(tmp_path, base_limits()))
 
 
+def test_lead_limits_defaults_and_parsing(tmp_path: Path) -> None:
+    """Лид-настройки читаются, по умолчанию 100 BYN и true."""
+    default_config = load_config(write_config(tmp_path, base_limits()))
+    assert default_config.limits.lead_max_price_byn == 100.0
+    assert default_config.limits.lead_negotiable is True
+
+    limits = base_limits() | {
+        "lead_max_price_byn": 0,
+        "lead_negotiable": False,
+    }
+    config = load_config(write_config(tmp_path, limits))
+    assert config.limits.lead_max_price_byn == 0.0
+    assert config.limits.lead_negotiable is False
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"lead_max_price_byn": -1},
+        {"lead_max_price_byn": "100"},
+        {"lead_negotiable": "yes"},
+    ],
+)
+def test_lead_limits_validation(tmp_path: Path, limits: dict) -> None:
+    """Невалидные лид-настройки отклоняются."""
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, base_limits() | limits))
+
+
 def test_chat_ids_parsing_and_admin_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

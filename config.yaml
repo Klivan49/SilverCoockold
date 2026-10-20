@@ -22,3 +22,5 @@ limits:
   request_timeout: 20
   force_scan_cooldown_sec: 300
   stale_poll_sec: 180
+  lead_max_price_byn: 100
+  lead_negotiable: true

@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS ad_analysis (
   price_per_gram REAL,
   scrap_price REAL,
   is_below_scrap INTEGER NOT NULL DEFAULT 0,
+  is_suspicious INTEGER DEFAULT 0,
+  is_lead INTEGER DEFAULT 0,
   note TEXT,
   parsed_at TEXT NOT NULL
 );
@@ -98,9 +100,18 @@ class Storage:
             connection.close()
 
     def _init_schema(self) -> None:
-        """Создать таблицы и индекс, если их ещё нет."""
+        """Создать таблицы, индекс и добрать новые колонки старой БД."""
         with self._connection() as connection:
             connection.executescript(SCHEMA_SQL)
+            for column in ("is_suspicious", "is_lead"):
+                try:
+                    connection.execute(
+                        f"ALTER TABLE ad_analysis "
+                        f"ADD COLUMN {column} INTEGER DEFAULT 0"
+                    )
+                except sqlite3.OperationalError:
+                    # Колонка уже есть — нормальный случай для новой БД.
+                    pass
 
     def is_new(self, ad_id: str) -> bool:
         """Проверить, встречалось ли объявление раньше."""
@@ -241,6 +252,9 @@ class Storage:
             is_below_scrap=bool(row["is_below_scrap"]),
             per_gram_pricing=per_gram,
             note=note,
+            is_suspicious=bool(row["is_suspicious"] or 0),
+            is_silver=note != "не серебро",
+            is_lead=bool(row["is_lead"] or 0),
         )
 
     def save_analysis(self, ad_id: str, analysis: SilverAnalysis) -> None:
@@ -249,8 +263,9 @@ class Storage:
             connection.execute(
                 "INSERT INTO ad_analysis ("
                 "ad_id, weight_g, purity, effective_purity, price_byn, "
-                "price_per_gram, scrap_price, is_below_scrap, note, parsed_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "price_per_gram, scrap_price, is_below_scrap, "
+                "is_suspicious, is_lead, note, parsed_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(ad_id) DO UPDATE SET "
                 "weight_g = excluded.weight_g, purity = excluded.purity, "
                 "effective_purity = excluded.effective_purity, "
@@ -258,6 +273,8 @@ class Storage:
                 "price_per_gram = excluded.price_per_gram, "
                 "scrap_price = excluded.scrap_price, "
                 "is_below_scrap = excluded.is_below_scrap, "
+                "is_suspicious = excluded.is_suspicious, "
+                "is_lead = excluded.is_lead, "
                 "note = excluded.note, parsed_at = excluded.parsed_at",
                 (
                     ad_id,
@@ -268,6 +285,8 @@ class Storage:
                     analysis.price_per_gram,
                     analysis.scrap_price,
                     int(analysis.is_below_scrap),
+                    int(analysis.is_suspicious),
+                    int(analysis.is_lead),
                     analysis.note,
                     utc_now_iso(),
                 ),

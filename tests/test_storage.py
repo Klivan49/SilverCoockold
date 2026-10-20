@@ -205,6 +205,8 @@ def test_ad_analysis_roundtrip(storage: Storage) -> None:
         is_below_scrap=True,
         per_gram_pricing=False,
         note="925 без клейма, эффективная проба 800",
+        is_suspicious=True,
+        is_lead=True,
     )
 
     storage.save_analysis("1", analysis)
@@ -219,6 +221,9 @@ def test_ad_analysis_roundtrip(storage: Storage) -> None:
     assert loaded.scrap_price == pytest.approx(72.0)
     assert loaded.is_below_scrap is True
     assert loaded.per_gram_pricing is False
+    assert loaded.is_suspicious is True
+    assert loaded.is_lead is True
+    assert loaded.is_silver is True
     assert "925 без клейма" in loaded.note
 
 
@@ -241,6 +246,33 @@ def test_ad_analysis_per_gram_flag_roundtrip(storage: Storage) -> None:
     loaded = storage.get_analysis("2")
     assert loaded is not None
     assert loaded.per_gram_pricing is True
+
+
+def test_analysis_columns_migration(tmp_path: Path) -> None:
+    """Старая таблица ad_analysis получает колонки is_suspicious/is_lead."""
+    db_path = tmp_path / "old.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE ad_analysis ("
+        "ad_id TEXT PRIMARY KEY, weight_g REAL, purity INTEGER, "
+        "effective_purity INTEGER, price_byn REAL, price_per_gram REAL, "
+        "scrap_price REAL, is_below_scrap INTEGER NOT NULL DEFAULT 0, "
+        "note TEXT, parsed_at TEXT NOT NULL)"
+    )
+    connection.commit()
+    connection.close()
+
+    Storage(db_path)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(ad_analysis)")
+        }
+    finally:
+        connection.close()
+    assert {"is_suspicious", "is_lead"} <= columns
 
 
 def test_wal_mode_and_busy_timeout(storage: Storage, db_path: Path) -> None:

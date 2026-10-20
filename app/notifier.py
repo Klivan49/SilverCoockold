@@ -96,13 +96,20 @@ def format_ad_message(
         )
     if analysis is not None and analysis.is_suspicious:
         lines.append("⚠️ Похоже на ошибку в цене/весе — проверьте")
+    if analysis is not None and analysis.is_lead:
+        lines.append(
+            "Вес/проба не указаны — спросите продавца: "
+            "«Подскажите точный вес и есть ли клеймо?»"
+        )
     lines.append(safe_url)
 
     text = "\n".join(lines)
-    if analysis is not None and analysis.is_suspicious:
-        text = "⚠️ ПРОВЕРИТЬ\n" + text
-    elif analysis is not None and analysis.is_below_scrap:
+    if analysis is not None and analysis.is_below_scrap:
         text = "💰 НИЖЕ ЛОМА\n" + text
+    elif analysis is not None and analysis.is_suspicious:
+        text = "⚠️ ПРОВЕРИТЬ\n" + text
+    elif analysis is not None and analysis.is_lead:
+        text = "🟡 ПРОВЕРИТЬ\n" + text
     return text
 
 

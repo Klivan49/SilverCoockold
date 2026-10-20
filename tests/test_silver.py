@@ -21,9 +21,19 @@ def make_ad(price_byn: int | None = 2499) -> Ad:
     )
 
 
-def analyze(body: str, price_byn: int | None = 2499, prices: ScrapPrices | None = None):
+def analyze(
+    body: str,
+    price_byn: int | None = 2499,
+    prices: ScrapPrices | None = None,
+    **kwargs: object,
+):
     """Короткий вызов парсера."""
-    return analyze_ad(make_ad(price_byn), body, prices or default_scrap_prices())
+    return analyze_ad(
+        make_ad(price_byn),
+        body,
+        prices or default_scrap_prices(),
+        **kwargs,  # type: ignore[arg-type]
+    )
 
 
 @pytest.mark.parametrize(
@@ -178,6 +188,8 @@ def test_non_silver_is_ignored() -> None:
     assert result.note == "не серебро"
     assert result.is_suspicious is False
     assert result.is_below_scrap is False
+    assert result.is_silver is False
+    assert result.is_lead is False
 
 
 def test_suspicious_tiny_price_is_not_below() -> None:
@@ -195,3 +207,63 @@ def test_unrealistic_weight_is_ignored() -> None:
 
     assert result.weight_g is None
     assert result.is_suspicious is False
+
+
+def test_lead_bracelet_without_weight_or_purity() -> None:
+    """Браслет 30 BYN без веса/пробы — лид."""
+    result = analyze("Браслет серебряный 16 размер", 3000)
+
+    assert result.is_silver is True
+    assert result.weight_g is None
+    assert result.purity is None
+    assert result.is_lead is True
+    assert result.is_below_scrap is False
+
+
+def test_lead_chain_925_negotiable_price() -> None:
+    """Цепочка 925 без веса и с ценой 0 — лид."""
+    result = analyze("Цепочка серебро 925", 0)
+
+    assert result.purity == 925
+    assert result.weight_g is None
+    assert result.price_byn is None
+    assert result.is_lead is True
+
+
+def test_lead_price_limit() -> None:
+    """Дороже lead_max_price_byn без веса — уже не лид."""
+    result = analyze("Браслет серебряный 16 размер", 15000)
+
+    assert result.price_byn == 150.0
+    assert result.is_lead is False
+
+
+def test_lead_disabled() -> None:
+    """Лид можно отключить порогом или negotiable."""
+    assert (
+        analyze(
+            "Браслет серебряный 16 размер",
+            3000,
+            lead_max_price_byn=0,
+        ).is_lead
+        is False
+    )
+    assert (
+        analyze(
+            "Цепочка серебро 925",
+            0,
+            lead_negotiable=False,
+        ).is_lead
+        is False
+    )
+
+
+def test_lead_not_for_below_or_suspicious() -> None:
+    """Ниже лома и подозрительные цены не считаются лидом."""
+    below = analyze("925 проба, вес 10 г, клеймо", 1000)
+    suspicious = analyze("925 проба, вес 51 г, клеймо", 1000)
+
+    assert below.is_below_scrap is True
+    assert below.is_lead is False
+    assert suspicious.is_suspicious is True
+    assert suspicious.is_lead is False

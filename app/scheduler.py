@@ -257,7 +257,13 @@ class Scheduler:
         if body is None:
             return None
         try:
-            analysis = analyze_ad(ad, body, prices)
+            analysis = analyze_ad(
+                ad,
+                body,
+                prices,
+                lead_max_price_byn=self.config.limits.lead_max_price_byn,
+                lead_negotiable=self.config.limits.lead_negotiable,
+            )
         except Exception:
             logger.exception("silver: не удалось разобрать ad_id=%s", ad.ad_id)
             return None
@@ -305,7 +311,11 @@ class Scheduler:
                 continue
             should_send = (
                 analysis is not None
-                and (analysis.is_below_scrap or analysis.is_suspicious)
+                and (
+                    analysis.is_below_scrap
+                    or analysis.is_suspicious
+                    or analysis.is_lead
+                )
             ) or query.notify
             if not should_send:
                 continue
@@ -327,6 +337,8 @@ class Scheduler:
                 reason = "ниже лома"
             elif analysis is not None and analysis.is_suspicious:
                 reason = "подозрительно дешево"
+            elif analysis is not None and analysis.is_lead:
+                reason = "лид"
             else:
                 reason = "notify"
             logger.info(

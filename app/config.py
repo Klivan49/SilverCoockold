@@ -43,6 +43,8 @@ class LimitsConfig:
     request_timeout: float
     force_scan_cooldown_sec: int = 300
     stale_poll_sec: int = 180
+    lead_max_price_byn: float = 100.0
+    lead_negotiable: bool = True
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,15 @@ def _positive_number(value: Any, name: str) -> float:
     return float(value)
 
 
+def _non_negative_number(value: Any, name: str) -> float:
+    """Проверить, что значение — неотрицательное число."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        raise ConfigError(
+            f"config.yaml: {name} должен быть неотрицательным числом"
+        )
+    return float(value)
+
+
 def _parse_queries(raw: Any) -> list[QueryConfig]:
     """Разобрать и проверить раздел queries."""
     if not isinstance(raw, list) or not raw:
@@ -121,6 +132,11 @@ def _parse_queries(raw: Any) -> list[QueryConfig]:
 def _parse_limits(raw: Any) -> LimitsConfig:
     """Разобрать раздел limits, подставив значения по умолчанию."""
     data = raw if isinstance(raw, dict) else {}
+    lead_negotiable = data.get("lead_negotiable", True)
+    if not isinstance(lead_negotiable, bool):
+        raise ConfigError(
+            "config.yaml: limits.lead_negotiable должен быть true или false"
+        )
     return LimitsConfig(
         max_alerts_per_cycle=_positive_int(
             data.get("max_alerts_per_cycle", 20), "limits.max_alerts_per_cycle"
@@ -139,6 +155,11 @@ def _parse_limits(raw: Any) -> LimitsConfig:
             data.get("stale_poll_sec", 180),
             "limits.stale_poll_sec",
         ),
+        lead_max_price_byn=_non_negative_number(
+            data.get("lead_max_price_byn", 100),
+            "limits.lead_max_price_byn",
+        ),
+        lead_negotiable=lead_negotiable,
     )
 
 

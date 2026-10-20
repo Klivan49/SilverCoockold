@@ -110,6 +110,27 @@ def test_below_scrap_prefix() -> None:
     assert "⚖️ 14,4 г · 925" in text
 
 
+def test_lead_prefix_and_question() -> None:
+    """Лид получает жёлтый префикс и вопрос продавцу."""
+    analysis = make_analysis(
+        weight_g=None,
+        purity=None,
+        effective_purity=None,
+        price_byn=None,
+        price_per_gram=None,
+        scrap_price=None,
+        is_below_scrap=False,
+        is_lead=True,
+    )
+
+    text = format_ad_message(make_ad(price_byn=0), "серебро", analysis)
+
+    assert text.startswith("🟡 ПРОВЕРИТЬ\n")
+    assert "Цена: договорная" in text
+    assert "Подскажите точный вес и есть ли клеймо?" in text
+    assert "НИЖЕ ЛОМА" not in text
+
+
 def test_per_gram_price_line() -> None:
     """Цена за грамм отображается как BYN/г (за грамм)."""
     analysis = make_analysis(

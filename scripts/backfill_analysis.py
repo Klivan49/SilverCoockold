@@ -46,12 +46,17 @@ def load_rows(db_path: Path) -> list[sqlite3.Row]:
 
 
 def format_digest(
-    checked: int, below: list[tuple[Ad, SilverAnalysis]], errors: int
+    checked: int,
+    below: list[tuple[Ad, SilverAnalysis]],
+    errors: int,
+    leads: int,
+    suspicious: int,
 ) -> str:
     """Собрать одно сообщение с итогами бэкфилла."""
     lines = [
         f"📊 Бэкфилл анализа: проверено {checked}, ниже лома {len(below)}, "
-        f"ошибок {errors}"
+        f"ошибок {errors}",
+        f"🟡 Лиды: {leads}, ⚠️ Подозрительные: {suspicious}",
     ]
     for ad, analysis in below[:10]:
         subject = html.escape((ad.subject or "")[:80], quote=False)
@@ -109,6 +114,8 @@ def main() -> int:
     )
     below: list[tuple[Ad, SilverAnalysis]] = []
     errors = 0
+    leads = 0
+    suspicious = 0
     started = time.monotonic()
 
     try:
@@ -136,15 +143,26 @@ def main() -> int:
                 list_time=row["list_time"],
                 raw=raw,
             )
-            analysis = analyze_ad(ad, body, prices)
+            analysis = analyze_ad(
+                ad,
+                body,
+                prices,
+                lead_max_price_byn=config.limits.lead_max_price_byn,
+                lead_negotiable=config.limits.lead_negotiable,
+            )
             storage.save_analysis(ad_id, analysis)
             if analysis.is_below_scrap:
                 below.append((ad, analysis))
+            if analysis.is_lead:
+                leads += 1
+            if analysis.is_suspicious:
+                suspicious += 1
 
             if index % 10 == 0 or index == len(rows):
                 elapsed = int(time.monotonic() - started)
                 print(
                     f"[{index}/{len(rows)}] ниже лома={len(below)} "
+                    f"лиды={leads} подозрительных={suspicious} "
                     f"ошибок={errors} прошло={elapsed}s",
                     flush=True,
                 )
@@ -153,11 +171,12 @@ def main() -> int:
         client.close()
 
     print(
-        f"Готово: проверено {len(rows)}, ниже лома {len(below)}, ошибок {errors}",
+        f"Готово: проверено {len(rows)}, ниже лома {len(below)}, "
+        f"лиды {leads}, подозрительных {suspicious}, ошибок {errors}",
         flush=True,
     )
     if not args.no_digest:
-        text = format_digest(len(rows), below, errors)
+        text = format_digest(len(rows), below, errors, leads, suspicious)
         asyncio.run(send_digest(text, config.telegram_token, config.telegram_chat_ids))
     return 0
 

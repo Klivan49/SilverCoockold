@@ -66,6 +66,8 @@ class SilverAnalysis:
     per_gram_pricing: bool
     note: str
     is_suspicious: bool = False
+    is_silver: bool = True
+    is_lead: bool = False
 
 
 def _to_float(raw: str) -> float | None:
@@ -189,7 +191,13 @@ def _extract_body_price(text: str) -> float | None:
     return value if value is not None and value > 0 else None
 
 
-def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
+def analyze_ad(
+    ad: Ad,
+    body: str,
+    prices: ScrapPrices,
+    lead_max_price_byn: float = 100.0,
+    lead_negotiable: bool = True,
+) -> SilverAnalysis:
     """Разобрать объявление и посчитать, дешевле ли оно лома."""
     text = f"{ad.subject}\n{body or ''}".strip()
     notes: list[str] = []
@@ -205,6 +213,8 @@ def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
             per_gram_pricing=False,
             note="не серебро",
             is_suspicious=False,
+            is_silver=False,
+            is_lead=False,
         )
     if not (body or "").strip():
         notes.append("описание пустое")
@@ -270,6 +280,22 @@ def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
         and total_price < scrap_price
         and not suspicious
     )
+    is_lead = (
+        (weight is None or purity is None)
+        and (
+            (
+                total_price is not None
+                and total_price <= lead_max_price_byn
+            )
+            or (
+                total_price is None
+                and lead_negotiable
+                and purity is not None
+            )
+        )
+        and not is_below
+        and not suspicious
+    )
 
     return SilverAnalysis(
         weight_g=weight,
@@ -282,4 +308,6 @@ def analyze_ad(ad: Ad, body: str, prices: ScrapPrices) -> SilverAnalysis:
         per_gram_pricing=per_gram,
         note="; ".join(notes),
         is_suspicious=suspicious,
+        is_silver=True,
+        is_lead=is_lead,
     )

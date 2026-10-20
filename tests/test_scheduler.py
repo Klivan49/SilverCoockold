@@ -138,11 +138,12 @@ def make_ad(
     ad_id: str = "1",
     list_time: str | None = None,
     price_byn: int | None = 2499,
+    subject: str | None = None,
 ) -> Ad:
     """Собрать тестовое объявление."""
     return Ad(
         ad_id=ad_id,
-        subject=f"объявление {ad_id}",
+        subject=subject or f"объявление {ad_id}",
         price_byn=price_byn,
         url=f"https://www.kufar.by/item/{ad_id}",
         list_time=list_time,
@@ -487,6 +488,30 @@ def test_below_scrap_sent_without_notify(tmp_path: Path) -> None:
     assert kufar.detail_calls == [ad.url]
     saved = storage.get_analysis(ad.ad_id)
     assert saved is not None and saved.is_below_scrap is True
+
+
+def test_lead_sent_without_notify(tmp_path: Path) -> None:
+    """Лид без веса/пробы отправляется при notify=false."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad(
+        "lead",
+        price_byn=3000,
+        subject="Браслет серебряный 16 размер",
+    )
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    analysis = notifier.analyses[0]
+    assert isinstance(analysis, SilverAnalysis)
+    assert analysis.is_lead is True
+    assert storage.is_instant_alerted(ad.ad_id) is True
 
 
 def test_above_scrap_not_sent_without_notify(tmp_path: Path) -> None:
