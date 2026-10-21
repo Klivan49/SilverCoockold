@@ -387,13 +387,17 @@ class Scheduler:
 
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
-            if ai is not None and not ai.is_silver:
-                logger.info("AI: не серебро ad_id=%s", ad.ad_id)
-                continue
             if ai is not None and ai.verdict == "skip":
                 logger.info("AI: skip ad_id=%s", ad.ad_id)
                 continue
             if ai is not None:
+                if not ai.is_silver:
+                    logger.info(
+                        "AI: серебро не подтверждено, но verdict=%s — отправляю "
+                        "как лид ad_id=%s",
+                        ai.verdict,
+                        ad.ad_id,
+                    )
                 should_send = True
             else:
                 should_send = (

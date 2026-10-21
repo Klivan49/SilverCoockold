@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -24,10 +25,18 @@ VERDICTS = {"look", "skip", "ask"}
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 SYSTEM_PROMPT = """Ты фильтр объявлений о серебре для покупателя лома.
-Реши, действительно ли это изделие из серебра, и стоит ли его смотреть.
+Реши, похоже ли объявление на серебро и стоит ли его смотреть.
 Отсеивай одежду и обувь, «серебряный цвет», бижутерию, посеребрение,
 мельхиор, латунь и другие имитации. Не считай серебром просто слово
 «серебро» в названии цвета.
+
+is_silver=true, если в объявлении заявлено серебро или оно похоже на
+серебро, даже когда вес и проба не указаны. is_silver=false только
+для явно не серебряных вещей: одежды, цвета, бижутерии, посеребрения,
+латуни, мельхиора.
+verdict=skip только для явно не серебряных или бесполезных лотов.
+verdict=ask, если это похоже на серебро, но не хватает веса/пробы/клейма.
+verdict=look, если данных достаточно и лот стоит внимания.
 
 Извлеки вес в граммах, пробу и пойми, указана ли цена за грамм.
 Если данных не хватает, задай один конкретный вопрос продавцу.
@@ -56,12 +65,14 @@ class DeepSeekAnalyzer:
         api_key: str = "",
         model: str = DEFAULT_MODEL,
         timeout: float = 20.0,
+        session_id: str = "ses_silverwatch_ai",
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.session_id = session_id
         self._client = client
 
     def _endpoint(self) -> str:
@@ -97,7 +108,7 @@ class DeepSeekAnalyzer:
                 },
             ],
             "temperature": 0,
-            "max_tokens": 400,
+            "max_tokens": 900,
             "response_format": {"type": "json_object"},
         }
 
@@ -106,6 +117,7 @@ class DeepSeekAnalyzer:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "x-opencode-session": self.session_id,
         }
 
     async def analyze(
@@ -124,7 +136,7 @@ class DeepSeekAnalyzer:
         client = self._client or httpx.AsyncClient(timeout=self.timeout)
         payload = self._payload(ad, body, regex_analysis, prices)
         try:
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     response = await client.post(
                         self._endpoint(),
@@ -132,19 +144,33 @@ class DeepSeekAnalyzer:
                         json=payload,
                     )
                 except (httpx.TimeoutException, httpx.HTTPError) as exc:
+                    if attempt < 2:
+                        delay = 2 * (attempt + 1)
+                        logger.warning(
+                            "AI: ошибка запроса %s, повтор через %d с",
+                            type(exc).__name__,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
                     logger.warning(
-                        "AI: ошибка запроса %s", type(exc).__name__
+                        "AI: ошибка запроса %s после повторов",
+                        type(exc).__name__,
                     )
                     return None
 
                 if response.status_code == 429 or response.status_code >= 500:
-                    if attempt == 0:
+                    if attempt < 2:
+                        delay = 2 * (attempt + 1)
                         logger.warning(
-                            "AI: HTTP %d, повтор", response.status_code
+                            "AI: HTTP %d, повтор через %d с",
+                            response.status_code,
+                            delay,
                         )
+                        await asyncio.sleep(delay)
                         continue
                     logger.warning(
-                        "AI: HTTP %d после повтора", response.status_code
+                        "AI: HTTP %d после повторов", response.status_code
                     )
                     return None
                 if response.status_code != 200:

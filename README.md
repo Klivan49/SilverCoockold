@@ -423,25 +423,40 @@ AI нужен для двух вещей:
 - отсеять мусор, который regex принимает за серебро: одежду, «серебряный цвет», бижутерию, посеребрение;
 - объяснить, почему лот стоит смотреть, и сформулировать вопрос продавцу.
 
-По умолчанию `LLM_PROVIDER=none` — поведение как раньше, без внешних запросов. Включение:
+По умолчанию `LLM_PROVIDER=none` — поведение как раньше, без внешних запросов.
+
+**OpenCode Go** (модель входит в подписку):
+
+```env
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://opencode.ai/inference/go/openai/v1
+LLM_API_KEY=oc_sk_...
+LLM_MODEL=deepseek-v4.1-flash
+LLM_SESSION_ID=ses_silverwatch_ai
+LLM_MAX_CALLS_PER_DAY=200
+LLM_TIMEOUT=30
+```
+
+**DeepSeek напрямую** (нужен баланс на platform.deepseek.com):
 
 ```env
 LLM_PROVIDER=deepseek
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_API_KEY=ваш_ключ
-LLM_MODEL=deepseek-chat
+LLM_API_KEY=sk-...
+LLM_MODEL=deepseek-flash
 LLM_MAX_CALLS_PER_DAY=200
 LLM_TIMEOUT=20
 ```
 
-Ключ можно получить на [platform.deepseek.com](https://platform.deepseek.com/) (лимиты и бесплатные кредиты зависят от аккаунта). Поддерживается любой OpenAI-совместимый endpoint: укажите `openai` в `LLM_PROVIDER` и свой `LLM_BASE_URL`/`LLM_MODEL`.
+Поддерживается любой OpenAI-совместимый endpoint: укажите `openai` в `LLM_PROVIDER` и свой `LLM_BASE_URL`/`LLM_MODEL`. Бесплатную модель `deepseek-v4.1-flash-free` нельзя использовать снаружи OpenCode — API отвечает `403 FreeTierError`; для бота нужен Go-ключ и платная модель из подписки Go.
 
 Как работает:
 
 - AI вызывается только для новых объявлений, не для bootstrap/catchup;
 - только если есть шанс серебра: regex-анализ считает серебром, запрос приоритетный или в тексте есть серебро/925/875/лом/монеты/украшения;
-- вердикт `is_silver=false` или `skip` — уведомление не отправляется даже при `notify=true`;
-- `look`/`ask` — отправляется с блоком `🤖 причина` и `❓ вопрос`;
+- вердикт `skip` — уведомление не отправляется даже при `notify=true`;
+- `look`/`ask` — отправляется с блоком `🤖 причина` и `❓ вопрос`; если AI не подтвердил серебро, но просит уточнить (`ask`), лот всё равно уходит как лид;
+- `is_silver=false` само по себе не блокирует: блокирует только `skip`;
 - ответ кэшируется в `ad_ai`, повторно модель не вызывается;
 - дневной лимит считается в `meta.llm_calls:YYYY-MM-DD`;
 - нет ключа, таймаут, ошибка HTTP, битый JSON или превышен лимит — fallback на обычную regex-логику.

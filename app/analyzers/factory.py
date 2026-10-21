@@ -28,4 +28,7 @@ def build_analyzer(config: Config) -> Analyzer:
         api_key=config.llm_api_key,
         model=config.llm_model or DEFAULT_MODEL,
         timeout=config.llm_timeout,
+        session_id=getattr(
+            config, "llm_session_id", "ses_silverwatch_ai"
+        ),
     )

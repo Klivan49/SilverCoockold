@@ -66,6 +66,7 @@ class Config:
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
+    llm_session_id: str = "ses_silverwatch_ai"
     llm_max_calls_per_day: int = 200
     llm_timeout: float = 20.0
 
@@ -297,6 +298,9 @@ def load_config(config_path: Path | None = None) -> Config:
         raise ConfigError("LLM_BASE_URL должен быть полным http(s)-адресом")
     llm_api_key = (os.getenv("LLM_API_KEY") or "").strip() or None
     llm_model = (os.getenv("LLM_MODEL") or "").strip() or "deepseek-chat"
+    llm_session_id = (
+        (os.getenv("LLM_SESSION_ID") or "").strip() or "ses_silverwatch_ai"
+    )
     llm_max_calls = _env_positive_int(
         os.getenv("LLM_MAX_CALLS_PER_DAY"), "LLM_MAX_CALLS_PER_DAY", 200
     )
@@ -328,6 +332,7 @@ def load_config(config_path: Path | None = None) -> Config:
         llm_base_url=llm_base_url,
         llm_api_key=llm_api_key,
         llm_model=llm_model,
+        llm_session_id=llm_session_id,
         llm_max_calls_per_day=llm_max_calls,
         llm_timeout=llm_timeout,
     )
