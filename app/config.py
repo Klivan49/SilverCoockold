@@ -62,6 +62,12 @@ class Config:
     telegram_chat_ids: list[str] = field(default_factory=list)
     telegram_admin_ids: list[str] = field(default_factory=list)
     healthcheck_url: str | None = None
+    llm_provider: str = "none"
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    llm_max_calls_per_day: int = 200
+    llm_timeout: float = 20.0
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -163,6 +169,34 @@ def _parse_limits(raw: Any) -> LimitsConfig:
     )
 
 
+def _env_positive_int(value: str | None, name: str, default: int) -> int:
+    """Разобрать положительное целое из env."""
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name}: ожидается целое число") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{name}: должно быть > 0")
+    return parsed
+
+
+def _env_positive_number(
+    value: str | None, name: str, default: float
+) -> float:
+    """Разобрать положительное число из env."""
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = float(value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name}: ожидается число") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{name}: должно быть > 0")
+    return parsed
+
+
 def _parse_id_list(value: str | None, name: str) -> list[str]:
     """Разобрать список ID через запятую: пробелы и пустые элементы допустимы."""
     if value is None or not value.strip():
@@ -247,6 +281,29 @@ def load_config(config_path: Path | None = None) -> Config:
                 "HEALTHCHECK_URL должен быть полным http(s)-адресом"
             )
 
+    provider = (os.getenv("LLM_PROVIDER") or "none").strip().lower()
+    if provider in {"", "null"}:
+        provider = "none"
+    if provider not in {"none", "deepseek", "openai"}:
+        raise ConfigError(
+            "LLM_PROVIDER: допустимые значения none, deepseek, openai"
+        )
+    llm_base_url = (
+        (os.getenv("LLM_BASE_URL") or "").strip()
+        or "https://api.deepseek.com/v1"
+    )
+    parsed_base = urlparse(llm_base_url)
+    if parsed_base.scheme not in {"http", "https"} or not parsed_base.netloc:
+        raise ConfigError("LLM_BASE_URL должен быть полным http(s)-адресом")
+    llm_api_key = (os.getenv("LLM_API_KEY") or "").strip() or None
+    llm_model = (os.getenv("LLM_MODEL") or "").strip() or "deepseek-chat"
+    llm_max_calls = _env_positive_int(
+        os.getenv("LLM_MAX_CALLS_PER_DAY"), "LLM_MAX_CALLS_PER_DAY", 200
+    )
+    llm_timeout = _env_positive_number(
+        os.getenv("LLM_TIMEOUT"), "LLM_TIMEOUT", 20.0
+    )
+
     if not dry_run and token is None:
         raise ConfigError("при DRY_RUN=0 обязателен TELEGRAM_BOT_TOKEN")
     if not dry_run and not chat_ids:
@@ -267,4 +324,10 @@ def load_config(config_path: Path | None = None) -> Config:
         telegram_chat_ids=chat_ids,
         telegram_admin_ids=admin_ids,
         healthcheck_url=healthcheck_url,
+        llm_provider=provider,
+        llm_base_url=llm_base_url,
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_max_calls_per_day=llm_max_calls,
+        llm_timeout=llm_timeout,
     )

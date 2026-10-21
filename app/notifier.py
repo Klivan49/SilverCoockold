@@ -11,6 +11,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.analyzers.base import AiVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 
@@ -47,7 +48,10 @@ def _format_money(value: float) -> str:
 
 
 def format_ad_message(
-    ad: Ad, query: str, analysis: SilverAnalysis | None = None
+    ad: Ad,
+    query: str,
+    analysis: SilverAnalysis | None = None,
+    ai: AiVerdict | None = None,
 ) -> str:
     """Собрать HTML-сообщение о новом объявлении."""
     safe_query = html.escape(query, quote=False)
@@ -101,11 +105,19 @@ def format_ad_message(
             "Вес/проба не указаны — спросите продавца: "
             "«Подскажите точный вес и есть ли клеймо?»"
         )
+    if ai is not None and ai.reason:
+        lines.append(f"🤖 {html.escape(ai.reason.strip()[:400], quote=False)}")
+    if ai is not None and ai.question:
+        lines.append(f"❓ {html.escape(ai.question.strip()[:400], quote=False)}")
     lines.append(safe_url)
 
     text = "\n".join(lines)
     if analysis is not None and analysis.is_below_scrap:
         text = "💰 НИЖЕ ЛОМА\n" + text
+    elif ai is not None and ai.verdict == "ask":
+        text = "❓ УТОЧНИТЬ\n" + text
+    elif ai is not None and ai.verdict == "look":
+        text = "🟡 ПРОВЕРИТЬ\n" + text
     elif analysis is not None and analysis.is_suspicious:
         text = "⚠️ ПРОВЕРИТЬ\n" + text
     elif analysis is not None and analysis.is_lead:
@@ -164,11 +176,15 @@ class Notifier:
         return self._bot
 
     async def send_ad(
-        self, ad: Ad, query: str, analysis: SilverAnalysis | None = None
+        self,
+        ad: Ad,
+        query: str,
+        analysis: SilverAnalysis | None = None,
+        ai: AiVerdict | None = None,
     ) -> bool:
         """Отправить уведомление о новом объявлении с кнопкой скана."""
         return await self.send_text(
-            format_ad_message(ad, query, analysis),
+            format_ad_message(ad, query, analysis, ai),
             reply_markup=scan_keyboard(),
         )
 

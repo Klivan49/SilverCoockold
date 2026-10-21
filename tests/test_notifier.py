@@ -9,6 +9,7 @@ import pytest
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 
 from app import notifier as notifier_module
+from app.analyzers.base import AiVerdict
 from app.models import Ad
 from app.notifier import Notifier, format_ad_message
 from app.silver import SilverAnalysis
@@ -155,6 +156,51 @@ def test_hallmark_fallback_in_message() -> None:
     )
 
     assert "⚖️ 14,4 г · 925→800" in text
+
+
+def make_ai(**kwargs: object) -> AiVerdict:
+    """AI-вердикт для тестов."""
+    values: dict[str, object] = {
+        "is_silver": True,
+        "category": "украшение",
+        "verdict": "look",
+        "reason": "Похоже на серебро",
+        "question": "Есть ли клеймо?",
+        "weight_g": None,
+        "purity": None,
+        "confidence": 0.8,
+        "model": "fake",
+    }
+    values.update(kwargs)
+    return AiVerdict(**values)  # type: ignore[arg-type]
+
+
+def test_ai_reason_question_and_escaping() -> None:
+    """Reason/question экранируются и попадают в сообщение."""
+    ai = make_ai(
+        verdict="ask",
+        reason="Лот <серебро> & вес",
+        question="Клеймо <есть>?",
+    )
+    text = format_ad_message(make_ad(), "серебро", make_analysis(), ai)
+
+    assert text.startswith("❓ УТОЧНИТЬ\n")
+    assert "🤖 Лот &lt;серебро&gt; &amp; вес" in text
+    assert "❓ Клеймо &lt;есть&gt;?" in text
+    assert "<серебро>" not in text
+
+
+def test_ai_look_prefix_and_below_priority() -> None:
+    """look даёт 🟡, но «ниже лома» остаётся выше."""
+    look = make_ai(verdict="look")
+    assert format_ad_message(make_ad(), "q", make_analysis(), look).startswith(
+        "🟡 ПРОВЕРИТЬ\n"
+    )
+
+    below = make_analysis(is_below_scrap=True)
+    assert format_ad_message(make_ad(), "q", below, look).startswith(
+        "💰 НИЖЕ ЛОМА\n"
+    )
 
 
 def test_long_subject_is_truncated() -> None:

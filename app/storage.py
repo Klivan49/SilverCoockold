@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from app.analyzers.base import AiVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 
@@ -65,6 +67,12 @@ CREATE TABLE IF NOT EXISTS ad_analysis (
   is_lead INTEGER DEFAULT 0,
   note TEXT,
   parsed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ad_ai (
+  ad_id TEXT PRIMARY KEY,
+  verdict_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 """
 
@@ -288,6 +296,51 @@ class Storage:
                     int(analysis.is_suspicious),
                     int(analysis.is_lead),
                     analysis.note,
+                    utc_now_iso(),
+                ),
+            )
+
+    def get_ai_verdict(self, ad_id: str) -> AiVerdict | None:
+        """Прочитать кэш AI-вердикта."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT verdict_json FROM ad_ai WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["verdict_json"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return AiVerdict(
+                is_silver=bool(payload["is_silver"]),
+                category=str(payload.get("category", "другое")),
+                verdict=str(payload["verdict"]),
+                reason=str(payload.get("reason", "")),
+                question=str(payload.get("question", "")),
+                weight_g=payload.get("weight_g"),
+                purity=payload.get("purity"),
+                confidence=float(payload.get("confidence", 0)),
+                model=str(payload.get("model", "")),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def save_ai_verdict(self, ad_id: str, verdict: AiVerdict) -> None:
+        """Сохранить AI-вердикт в кэш."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO ad_ai (ad_id, verdict_json, created_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(ad_id) DO UPDATE SET "
+                "verdict_json = excluded.verdict_json, "
+                "created_at = excluded.created_at",
+                (
+                    ad_id,
+                    json.dumps(asdict(verdict), ensure_ascii=False),
                     utc_now_iso(),
                 ),
             )

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from app.analyzers.base import AiVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 from app.storage import Storage
@@ -246,6 +247,34 @@ def test_ad_analysis_per_gram_flag_roundtrip(storage: Storage) -> None:
     loaded = storage.get_analysis("2")
     assert loaded is not None
     assert loaded.per_gram_pricing is True
+
+
+def test_ai_verdict_roundtrip(storage: Storage) -> None:
+    """AI-вердикт кэшируется и читается обратно."""
+    verdict = AiVerdict(
+        is_silver=True,
+        category="украшение",
+        verdict="look",
+        reason="Стоит проверить",
+        question="Есть ли клеймо?",
+        weight_g=10.0,
+        purity=925,
+        confidence=0.8,
+        model="deepseek-chat",
+    )
+
+    assert storage.get_ai_verdict("1") is None
+    storage.save_ai_verdict("1", verdict)
+
+    loaded = storage.get_ai_verdict("1")
+    assert loaded is not None
+    assert loaded.is_silver is True
+    assert loaded.verdict == "look"
+    assert loaded.reason == "Стоит проверить"
+    assert loaded.weight_g == pytest.approx(10.0)
+    assert loaded.purity == 925
+    assert loaded.confidence == pytest.approx(0.8)
+    assert loaded.model == "deepseek-chat"
 
 
 def test_analysis_columns_migration(tmp_path: Path) -> None:

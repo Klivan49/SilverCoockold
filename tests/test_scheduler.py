@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.analyzers.base import AiVerdict
 from app.config import Config, LimitsConfig, QueryConfig
 from app.control import ControlState, write_control
 from app.kufar import KufarError
@@ -71,14 +72,20 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.ad_calls: list[tuple[Ad, str]] = []
         self.analyses: list[object] = []
+        self.ai_calls: list[object] = []
         self.texts: list[str] = []
         self.closed = False
 
     async def send_ad(
-        self, ad: Ad, query: str, analysis: object | None = None
+        self,
+        ad: Ad,
+        query: str,
+        analysis: object | None = None,
+        ai: object | None = None,
     ) -> bool:
         self.ad_calls.append((ad, query))
         self.analyses.append(analysis)
+        self.ai_calls.append(ai)
         return True
 
     async def send_text(self, text: str) -> bool:
@@ -102,6 +109,35 @@ class FakeSleep:
         self.values.append(False)
 
 
+class FakeAnalyzer:
+    """Подделка AI-анализатора."""
+
+    def __init__(self, verdict: AiVerdict | None) -> None:
+        self.verdict = verdict
+        self.calls = 0
+
+    async def analyze(self, ad, body, regex_analysis, prices):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        return self.verdict
+
+
+def ai_verdict(
+    is_silver: bool = True, verdict: str = "look"
+) -> AiVerdict:
+    """Собрать AI-вердикт для тестов."""
+    return AiVerdict(
+        is_silver=is_silver,
+        category="украшение",
+        verdict=verdict,
+        reason="Стоит проверить",
+        question="Есть ли клеймо?",
+        weight_g=None,
+        purity=None,
+        confidence=0.9,
+        model="fake",
+    )
+
+
 def make_query(
     q: str = "серебро лом",
     interval: int = 15,
@@ -116,6 +152,7 @@ def make_config(
     queries: list[QueryConfig],
     max_alerts: int = 20,
     catchup_hours: float = 12,
+    llm_max_calls: int = 200,
 ) -> Config:
     """Собрать конфиг для тестов без чтения файлов и env."""
     return Config(
@@ -131,6 +168,8 @@ def make_config(
         dry_run=True,
         log_level="INFO",
         proxy_url=None,
+        llm_provider="none",
+        llm_max_calls_per_day=llm_max_calls,
     )
 
 
@@ -156,6 +195,7 @@ def make_scheduler(
     storage: Storage,
     kufar: FakeKufar,
     notifier: FakeNotifier,
+    analyzer: object | None = None,
 ) -> Scheduler:
     """Собрать планировщик на подделках с control/status рядом с тестовой БД."""
     base = storage.db_path.parent
@@ -168,6 +208,7 @@ def make_scheduler(
         status_path=base / "status.json",
         scrap_prices_path=base / "scrap_prices.json",
         sleep_inhibitor=FakeSleep(),
+        analyzer=analyzer,
     )
 
 
@@ -639,6 +680,127 @@ def test_manual_scan_uses_scrap_logic(tmp_path: Path) -> None:
     assert len(notifier.ad_calls) == 1
     assert isinstance(notifier.analyses[0], SilverAnalysis)
     assert kufar.detail_calls == [ad.url]
+
+
+def test_ai_not_silver_skips_even_notify(tmp_path: Path) -> None:
+    """AI is_silver=false блокирует отправку даже при notify=true."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    analyzer = FakeAnalyzer(ai_verdict(is_silver=False, verdict="skip"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert analyzer.calls == 1
+
+
+def test_ai_look_sends_with_ai(tmp_path: Path) -> None:
+    """AI look отправляет объявление даже при notify=false."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=100000, subject="серебро")
+    verdict = ai_verdict(verdict="look")
+    analyzer = FakeAnalyzer(verdict)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert notifier.ai_calls[0] is verdict
+    assert storage.get_ai_verdict(ad.ad_id) is not None
+
+
+def test_ai_none_falls_back_to_regex(tmp_path: Path) -> None:
+    """AI None — работает текущая логика notify."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    analyzer = FakeAnalyzer(None)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert analyzer.calls == 1
+    assert notifier.ai_calls == [None]
+
+
+def test_ai_daily_limit(tmp_path: Path) -> None:
+    """После дневного лимита AI не вызывается, работает fallback."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ads = [
+        make_ad("1", price_byn=10000, subject="серебро"),
+        make_ad("2", price_byn=10000, subject="серебро"),
+    ]
+    analyzer = FakeAnalyzer(ai_verdict(verdict="look"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query], llm_max_calls=1),
+        storage,
+        FakeKufar({query.q: ads}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 2
+    assert analyzer.calls == 1
+    key = f"llm_calls:{datetime.now(timezone.utc).date().isoformat()}"
+    assert storage.get_meta(key) == "1"
+
+
+def test_ai_cache_prevents_repeat_call(tmp_path: Path) -> None:
+    """Повторный проход использует кэш AI."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    analyzer = FakeAnalyzer(ai_verdict(verdict="look"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    asyncio.run(scheduler.run_pass(query))
+    asyncio.run(scheduler.run_pass(query))
+
+    assert analyzer.calls == 1
+    assert len(notifier.ad_calls) == 1
 
 
 def test_interval_jitter_bounds() -> None:

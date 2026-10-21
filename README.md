@@ -416,6 +416,38 @@ https://www.kufar.by/item/...
 
 Отключить лиды: `lead_negotiable: false` и `lead_max_price_byn: 0`.
 
+### AI-фильтр DeepSeek
+
+AI нужен для двух вещей:
+
+- отсеять мусор, который regex принимает за серебро: одежду, «серебряный цвет», бижутерию, посеребрение;
+- объяснить, почему лот стоит смотреть, и сформулировать вопрос продавцу.
+
+По умолчанию `LLM_PROVIDER=none` — поведение как раньше, без внешних запросов. Включение:
+
+```env
+LLM_PROVIDER=deepseek
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=ваш_ключ
+LLM_MODEL=deepseek-chat
+LLM_MAX_CALLS_PER_DAY=200
+LLM_TIMEOUT=20
+```
+
+Ключ можно получить на [platform.deepseek.com](https://platform.deepseek.com/) (лимиты и бесплатные кредиты зависят от аккаунта). Поддерживается любой OpenAI-совместимый endpoint: укажите `openai` в `LLM_PROVIDER` и свой `LLM_BASE_URL`/`LLM_MODEL`.
+
+Как работает:
+
+- AI вызывается только для новых объявлений, не для bootstrap/catchup;
+- только если есть шанс серебра: regex-анализ считает серебром, запрос приоритетный или в тексте есть серебро/925/875/лом/монеты/украшения;
+- вердикт `is_silver=false` или `skip` — уведомление не отправляется даже при `notify=true`;
+- `look`/`ask` — отправляется с блоком `🤖 причина` и `❓ вопрос`;
+- ответ кэшируется в `ad_ai`, повторно модель не вызывается;
+- дневной лимит считается в `meta.llm_calls:YYYY-MM-DD`;
+- нет ключа, таймаут, ошибка HTTP, битый JSON или превышен лимит — fallback на обычную regex-логику.
+
+AI не заменяет проверку клейма и веса: он может ошибаться, поэтому фото и вопрос продавцу всё равно важны. Автосообщений продавцам нет.
+
 ---
 
 ## UI и управление
@@ -541,10 +573,12 @@ systemctl --user restart silverwatch
 | `LOG_LEVEL` | нет | `INFO`, `DEBUG` |
 | `PROXY_URL` | нет | прокси для Kufar |
 | `HEALTHCHECK_URL` | нет | внешний healthcheck; пусто — выключен |
-| `LLM_PROVIDER` | нет | пока `null` |
-| `LLM_BASE_URL` | нет | будущий AI |
-| `LLM_API_KEY` | нет | будущий AI |
-| `LLM_MODEL` | нет | будущий AI |
+| `LLM_PROVIDER` | нет | `none` (по умолчанию), `deepseek`, `openai` |
+| `LLM_BASE_URL` | нет | OpenAI-совместимый endpoint, по умолчанию `https://api.deepseek.com/v1` |
+| `LLM_API_KEY` | нет | ключ AI; без него AI выключен |
+| `LLM_MODEL` | нет | модель, по умолчанию `deepseek-chat` |
+| `LLM_MAX_CALLS_PER_DAY` | нет | дневной лимит вызовов, по умолчанию 200 |
+| `LLM_TIMEOUT` | нет | таймаут AI-запроса, секунды, по умолчанию 20 |
 
 \* Достаточно `TELEGRAM_CHAT_IDS` или старого `TELEGRAM_CHAT_ID` — хотя бы одно поле.
 

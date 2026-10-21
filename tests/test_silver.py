@@ -209,6 +209,15 @@ def test_unrealistic_weight_is_ignored() -> None:
     assert result.is_suspicious is False
 
 
+def test_silver_colored_clothing_is_not_silver() -> None:
+    """«Штаны серебряного цвета» — одежда, не серебро."""
+    result = analyze("Штаны серебряного цвета, 500 г", 50000)
+
+    assert result.is_silver is False
+    assert result.is_lead is False
+    assert result.note == "не серебро"
+
+
 def test_lead_bracelet_without_weight_or_purity() -> None:
     """Браслет 30 BYN без веса/пробы — лид."""
     result = analyze("Браслет серебряный 16 размер", 3000)

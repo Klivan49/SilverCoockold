@@ -41,6 +41,12 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_CHAT_IDS", "")
     monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "")
     monkeypatch.setenv("HEALTHCHECK_URL", "")
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    monkeypatch.setenv("LLM_BASE_URL", "")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("LLM_MODEL", "")
+    monkeypatch.setenv("LLM_MAX_CALLS_PER_DAY", "")
+    monkeypatch.setenv("LLM_TIMEOUT", "")
     monkeypatch.setenv("DB_PATH", "./data/test.db")
 
 
@@ -135,6 +141,60 @@ def test_lead_limits_validation(tmp_path: Path, limits: dict) -> None:
     """Невалидные лид-настройки отклоняются."""
     with pytest.raises(ConfigError):
         load_config(write_config(tmp_path, base_limits() | limits))
+
+
+def test_llm_defaults(tmp_path: Path) -> None:
+    """Без LLM_* AI выключен и параметры безопасны."""
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.llm_provider == "none"
+    assert config.llm_api_key is None
+    assert config.llm_base_url == "https://api.deepseek.com/v1"
+    assert config.llm_model == "deepseek-chat"
+    assert config.llm_max_calls_per_day == 200
+    assert config.llm_timeout == 20.0
+
+
+def test_llm_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Провайдер, ключ, модель и лимиты читаются из env."""
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "secret")
+    monkeypatch.setenv("LLM_MODEL", "custom-model")
+    monkeypatch.setenv("LLM_MAX_CALLS_PER_DAY", "5")
+    monkeypatch.setenv("LLM_TIMEOUT", "7")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.llm_provider == "deepseek"
+    assert config.llm_base_url == "https://api.example/v1"
+    assert config.llm_api_key == "secret"
+    assert config.llm_model == "custom-model"
+    assert config.llm_max_calls_per_day == 5
+    assert config.llm_timeout == 7.0
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("LLM_PROVIDER", "unknown"),
+        ("LLM_BASE_URL", "ftp://example/v1"),
+        ("LLM_MAX_CALLS_PER_DAY", "0"),
+        ("LLM_TIMEOUT", "-1"),
+    ],
+)
+def test_llm_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    """Невалидные LLM-настройки отклоняются."""
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, base_limits()))
 
 
 def test_chat_ids_parsing_and_admin_fallback(

@@ -6,12 +6,16 @@ import asyncio
 import html
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
 
+from app.analyzers.base import AiVerdict, Analyzer
+from app.analyzers.factory import build_analyzer
+from app.analyzers.null import NullAnalyzer
 from app.config import Config, QueryConfig
 from app.control import DEFAULT_CONTROL_PATH, ControlState, read_control, write_control
 from app.kufar import KufarClient, KufarError
@@ -40,6 +44,10 @@ STALE_CHECK_INTERVAL_SECONDS = 30
 STALE_ALERT_PREFIX = "stale_alert:"
 ERROR_429_TEXT = "⚠️ Kufar: 429, пауза 5 минут"
 LAST_429_NOTICE_KEY = LAST_KUFAR_NOTICE_KEY  # совместимость со старым именем
+AI_HINT_RE = re.compile(
+    r"серебр|925|875|лом|монет|ложк|вилк|цеп|кольц|серьг|браслет",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -87,6 +95,7 @@ class Scheduler:
         status_path: str | Path | None = None,
         scrap_prices_path: str | Path | None = None,
         sleep_inhibitor: SleepInhibitor | None = None,
+        analyzer: Analyzer | None = None,
     ) -> None:
         self.config = config
         self.kufar = kufar
@@ -96,6 +105,7 @@ class Scheduler:
         self.status_path = Path(status_path or DEFAULT_STATUS_PATH)
         self.scrap_prices_path = Path(scrap_prices_path or DEFAULT_SCRAP_PATH)
         self.sleep = sleep_inhibitor or SleepInhibitor()
+        self.analyzer = analyzer or build_analyzer(config)
         self._http_lock = asyncio.Lock()
         self._manual_scan_lock = asyncio.Lock()
         self._wake = asyncio.Event()
@@ -249,6 +259,66 @@ class Scheduler:
         logger.info("Bootstrap «%s»: сохранено %d объявлений", query.q, len(ads))
         return PassResult(new=new_count)
 
+    async def _maybe_ai(
+        self,
+        ad: Ad,
+        query: QueryConfig,
+        analysis: SilverAnalysis | None,
+        prices: ScrapPrices,
+        *,
+        allow_api: bool,
+    ) -> AiVerdict | None:
+        """Вернуть AI-вердикт из кэша или запросить его для нового ad."""
+        if isinstance(self.analyzer, NullAnalyzer):
+            return None
+        cached = self.storage.get_ai_verdict(ad.ad_id)
+        if cached is not None:
+            return cached
+        if not allow_api:
+            return None
+        if analysis is None:
+            return None
+
+        body = await self._get_body(ad)
+        if body is None:
+            return None
+        hint_text = f"{ad.subject}\n{body}"
+        if not (
+            analysis.is_silver
+            or query.notify
+            or AI_HINT_RE.search(hint_text)
+        ):
+            return None
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        calls_key = f"llm_calls:{today}"
+        try:
+            calls = int(self.storage.get_meta(calls_key) or 0)
+        except ValueError:
+            calls = 0
+        if calls >= self.config.llm_max_calls_per_day:
+            logger.info("AI: дневной лимит %d исчерпан", self.config.llm_max_calls_per_day)
+            return None
+        self.storage.set_meta(calls_key, str(calls + 1))
+
+        try:
+            verdict = await self.analyzer.analyze(ad, body, analysis, prices)
+        except Exception:
+            logger.exception("AI: ошибка анализа ad_id=%s", ad.ad_id)
+            return None
+        if verdict is None:
+            logger.info("AI: fallback для ad_id=%s", ad.ad_id)
+            return None
+        self.storage.save_ai_verdict(ad.ad_id, verdict)
+        logger.info(
+            "AI: ad_id=%s is_silver=%s verdict=%s confidence=%.2f",
+            ad.ad_id,
+            verdict.is_silver,
+            verdict.verdict,
+            verdict.confidence,
+        )
+        return verdict
+
     async def _analyze_new_ad(
         self, ad: Ad, prices: ScrapPrices
     ) -> SilverAnalysis | None:
@@ -307,16 +377,33 @@ class Scheduler:
             else:
                 analysis = self.storage.get_analysis(ad.ad_id)
 
+            ai = await self._maybe_ai(
+                ad,
+                query,
+                analysis,
+                prices,
+                allow_api=is_new,
+            )
+
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
-            should_send = (
-                analysis is not None
-                and (
-                    analysis.is_below_scrap
-                    or analysis.is_suspicious
-                    or analysis.is_lead
-                )
-            ) or query.notify
+            if ai is not None and not ai.is_silver:
+                logger.info("AI: не серебро ad_id=%s", ad.ad_id)
+                continue
+            if ai is not None and ai.verdict == "skip":
+                logger.info("AI: skip ad_id=%s", ad.ad_id)
+                continue
+            if ai is not None:
+                should_send = True
+            else:
+                should_send = (
+                    analysis is not None
+                    and (
+                        analysis.is_below_scrap
+                        or analysis.is_suspicious
+                        or analysis.is_lead
+                    )
+                ) or query.notify
             if not should_send:
                 continue
             if sent >= limit:
@@ -324,7 +411,7 @@ class Scheduler:
                 skipped += 1
                 continue
 
-            ok = await self.notifier.send_ad(ad, query.q, analysis)
+            ok = await self.notifier.send_ad(ad, query.q, analysis, ai)
             self.storage.mark_instant_alerted(ad.ad_id)
             self.storage.log_alert(
                 ad.ad_id,
@@ -333,7 +420,9 @@ class Scheduler:
                 error=None if ok else "не удалось отправить",
             )
             sent += 1
-            if analysis is not None and analysis.is_below_scrap:
+            if ai is not None:
+                reason = f"AI {ai.verdict}"
+            elif analysis is not None and analysis.is_below_scrap:
                 reason = "ниже лома"
             elif analysis is not None and analysis.is_suspicious:
                 reason = "подозрительно дешево"
