@@ -45,6 +45,7 @@ class LimitsConfig:
     stale_poll_sec: int = 180
     lead_max_price_byn: float = 100.0
     lead_negotiable: bool = True
+    require_ai_for_leads: bool = True
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,11 @@ def _parse_limits(raw: Any) -> LimitsConfig:
         raise ConfigError(
             "config.yaml: limits.lead_negotiable должен быть true или false"
         )
+    require_ai_for_leads = data.get("require_ai_for_leads", True)
+    if not isinstance(require_ai_for_leads, bool):
+        raise ConfigError(
+            "config.yaml: limits.require_ai_for_leads должен быть true или false"
+        )
     return LimitsConfig(
         max_alerts_per_cycle=_positive_int(
             data.get("max_alerts_per_cycle", 20), "limits.max_alerts_per_cycle"
@@ -167,6 +173,7 @@ def _parse_limits(raw: Any) -> LimitsConfig:
             "limits.lead_max_price_byn",
         ),
         lead_negotiable=lead_negotiable,
+        require_ai_for_leads=require_ai_for_leads,
     )
 
 

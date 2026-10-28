@@ -24,3 +24,4 @@ limits:
   stale_poll_sec: 180
   lead_max_price_byn: 100
   lead_negotiable: true
+  require_ai_for_leads: true

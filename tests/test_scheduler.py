@@ -153,6 +153,7 @@ def make_config(
     max_alerts: int = 20,
     catchup_hours: float = 12,
     llm_max_calls: int = 200,
+    require_ai_for_leads: bool = True,
 ) -> Config:
     """Собрать конфиг для тестов без чтения файлов и env."""
     return Config(
@@ -161,6 +162,7 @@ def make_config(
             max_alerts_per_cycle=max_alerts,
             catchup_max_age_hours=catchup_hours,
             request_timeout=20,
+            require_ai_for_leads=require_ai_for_leads,
         ),
         telegram_token=None,
         telegram_chat_id=None,
@@ -543,7 +545,12 @@ def test_lead_sent_without_notify(tmp_path: Path) -> None:
     )
     kufar = FakeKufar({query.q: [ad]})
     notifier = FakeNotifier()
-    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+    scheduler = make_scheduler(
+        make_config([query], require_ai_for_leads=False),
+        storage,
+        kufar,
+        notifier,
+    )
 
     result = asyncio.run(scheduler.run_pass(query))
 
@@ -553,6 +560,27 @@ def test_lead_sent_without_notify(tmp_path: Path) -> None:
     assert isinstance(analysis, SilverAnalysis)
     assert analysis.is_lead is True
     assert storage.is_instant_alerted(ad.ad_id) is True
+
+
+def test_lead_without_ai_is_skipped_by_default(tmp_path: Path) -> None:
+    """Без AI обычные лиды не спамят: только priority/below/suspicious."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad(
+        "lead-no-ai",
+        price_byn=3000,
+        subject="Браслет серебряный 16 размер",
+    )
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(make_config([query]), storage, kufar, notifier)
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.is_instant_alerted(ad.ad_id) is False
 
 
 def test_above_scrap_not_sent_without_notify(tmp_path: Path) -> None:

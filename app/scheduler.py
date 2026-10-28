@@ -385,6 +385,19 @@ class Scheduler:
                 allow_api=is_new,
             )
 
+            if (
+                ai is None
+                and self.config.limits.require_ai_for_leads
+                and not query.notify
+                and analysis is not None
+                and analysis.is_lead
+            ):
+                logger.info(
+                    "Лид без AI — пропуск ad_id=%s (fallback)",
+                    ad.ad_id,
+                )
+                continue
+
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
             if ai is not None and ai.verdict == "skip":
