@@ -47,6 +47,13 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_MODEL", "")
     monkeypatch.setenv("LLM_MAX_CALLS_PER_DAY", "")
     monkeypatch.setenv("LLM_TIMEOUT", "")
+    monkeypatch.setenv("VISION_PROVIDER", "none")
+    monkeypatch.setenv("VISION_MODEL", "")
+    monkeypatch.setenv("VISION_BASE_URL", "")
+    monkeypatch.setenv("VISION_API_KEY", "")
+    monkeypatch.setenv("VISION_MAX_CALLS_PER_DAY", "")
+    monkeypatch.setenv("VISION_MAX_IMAGES", "")
+    monkeypatch.setenv("VISION_TIMEOUT", "")
     monkeypatch.setenv("DB_PATH", "./data/test.db")
 
 
@@ -215,6 +222,66 @@ def test_llm_validation(
     value: str,
 ) -> None:
     """Невалидные LLM-настройки отклоняются."""
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, base_limits()))
+
+
+def test_vision_defaults(tmp_path: Path) -> None:
+    """Без VISION_* фото-анализ выключен."""
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.vision_provider == "none"
+    assert config.vision_model == "claude-haiku-5-5"
+    assert config.vision_base_url == (
+        "https://opencode.ai/inference/go/anthropic/v1"
+    )
+    assert config.vision_api_key is None
+    assert config.vision_max_calls_per_day == 100
+    assert config.vision_max_images == 3
+    assert config.vision_timeout == 60.0
+
+
+def test_vision_parsing_and_key_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vision-настройки читаются, ключ может наследоваться от LLM."""
+    monkeypatch.setenv("VISION_PROVIDER", "anthropic")
+    monkeypatch.setenv("VISION_MODEL", "claude-test")
+    monkeypatch.setenv("VISION_BASE_URL", "https://vision.example/v1")
+    monkeypatch.setenv("VISION_MAX_CALLS_PER_DAY", "10")
+    monkeypatch.setenv("VISION_MAX_IMAGES", "2")
+    monkeypatch.setenv("VISION_TIMEOUT", "30")
+    monkeypatch.setenv("LLM_API_KEY", "llm-key")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.vision_provider == "anthropic"
+    assert config.vision_model == "claude-test"
+    assert config.vision_base_url == "https://vision.example/v1"
+    assert config.vision_api_key == "llm-key"
+    assert config.vision_max_calls_per_day == 10
+    assert config.vision_max_images == 2
+    assert config.vision_timeout == 30.0
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("VISION_PROVIDER", "unknown"),
+        ("VISION_BASE_URL", "ftp://example/v1"),
+        ("VISION_MAX_CALLS_PER_DAY", "0"),
+        ("VISION_MAX_IMAGES", "0"),
+        ("VISION_TIMEOUT", "-1"),
+    ],
+)
+def test_vision_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    """Невалидные vision-настройки отклоняются."""
     monkeypatch.setenv(name, value)
     with pytest.raises(ConfigError):
         load_config(write_config(tmp_path, base_limits()))

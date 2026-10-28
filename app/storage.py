@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterator
 
 from app.analyzers.base import AiVerdict
+from app.analyzers.vision import VisionVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS ad_details (
   ad_id TEXT PRIMARY KEY,
   body TEXT,
-  fetched_at TEXT NOT NULL
+  fetched_at TEXT NOT NULL,
+  images_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ad_analysis (
@@ -81,6 +83,12 @@ CREATE TABLE IF NOT EXISTS pending_alerts (
   reason TEXT NOT NULL,
   queued_at TEXT NOT NULL,
   sent_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ad_vision (
+  ad_id TEXT PRIMARY KEY,
+  verdict_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 """
 
@@ -128,6 +136,12 @@ class Storage:
                 except sqlite3.OperationalError:
                     # Колонка уже есть — нормальный случай для новой БД.
                     pass
+            try:
+                connection.execute(
+                    "ALTER TABLE ad_details ADD COLUMN images_json TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
 
     def is_new(self, ad_id: str) -> bool:
         """Проверить, встречалось ли объявление раньше."""
@@ -231,16 +245,40 @@ class Storage:
             ).fetchone()
         return None if row is None else str(row["body"] or "")
 
-    def save_ad_detail(self, ad_id: str, body: str) -> None:
-        """Сохранить описание объявления и время загрузки."""
+    def save_ad_detail(
+        self,
+        ad_id: str,
+        body: str,
+        images: list[str] | None = None,
+    ) -> None:
+        """Сохранить описание и (опционально) URL картинок."""
+        images_json = (
+            None if images is None else json.dumps(images, ensure_ascii=False)
+        )
         with self._connection() as connection:
             connection.execute(
-                "INSERT INTO ad_details (ad_id, body, fetched_at) "
-                "VALUES (?, ?, ?) "
+                "INSERT INTO ad_details (ad_id, body, fetched_at, images_json) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(ad_id) DO UPDATE SET "
-                "body = excluded.body, fetched_at = excluded.fetched_at",
-                (ad_id, body, utc_now_iso()),
+                "body = excluded.body, fetched_at = excluded.fetched_at, "
+                "images_json = COALESCE(excluded.images_json, "
+                "ad_details.images_json)",
+                (ad_id, body, utc_now_iso(), images_json),
             )
+
+    def get_ad_detail_images(self, ad_id: str) -> list[str]:
+        """Прочитать сохранённые URL картинок объявления."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT images_json FROM ad_details WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        if row is None or not row["images_json"]:
+            return []
+        try:
+            value = json.loads(row["images_json"])
+        except (TypeError, ValueError):
+            return []
+        return [str(url) for url in value] if isinstance(value, list) else []
 
     def get_analysis(self, ad_id: str) -> SilverAnalysis | None:
         """Прочитать сохранённый разбор объявления."""
@@ -399,6 +437,53 @@ class Storage:
                 "SELECT COUNT(*) FROM pending_alerts WHERE sent_at IS NULL"
             ).fetchone()
         return int(row[0]) if row is not None else 0
+
+    def get_vision_verdict(self, ad_id: str) -> VisionVerdict | None:
+        """Прочитать кэш vision-вердикта."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT verdict_json FROM ad_vision WHERE ad_id = ?", (ad_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["verdict_json"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return VisionVerdict(
+                is_silver=bool(payload["is_silver"]),
+                item_type=str(payload.get("item_type", "другое")),
+                weight_g=payload.get("weight_g"),
+                purity=payload.get("purity"),
+                hallmark=str(payload.get("hallmark", "не видно")),
+                scale_visible=bool(payload.get("scale_visible", False)),
+                stones_or_costume=bool(payload.get("stones_or_costume", False)),
+                confidence=float(payload.get("confidence", 0)),
+                notes=str(payload.get("notes", "")),
+                question=str(payload.get("question", "")),
+                model=str(payload.get("model", "")),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def save_vision_verdict(self, ad_id: str, verdict: VisionVerdict) -> None:
+        """Сохранить vision-вердикт в кэш."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO ad_vision (ad_id, verdict_json, created_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(ad_id) DO UPDATE SET "
+                "verdict_json = excluded.verdict_json, "
+                "created_at = excluded.created_at",
+                (
+                    ad_id,
+                    json.dumps(asdict(verdict), ensure_ascii=False),
+                    utc_now_iso(),
+                ),
+            )
 
     def get_meta(self, key: str) -> str | None:
         """Прочитать произвольное значение из meta."""

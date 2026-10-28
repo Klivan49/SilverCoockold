@@ -10,11 +10,14 @@ from pathlib import Path
 
 import pytest
 
+from app import scheduler as scheduler_module
 from app.analyzers.base import AiVerdict
+from app.analyzers.vision import VisionVerdict
 from app.config import Config, LimitsConfig, QueryConfig
 from app.control import ControlState, write_control
-from app.kufar import KufarError
+from app.kufar import AdDetail, KufarError
 from app.models import Ad
+from app.scrap import default_scrap_prices
 from app.scheduler import (
     ERROR_429_TEXT,
     KUFAR_ERROR_ACTIVE,
@@ -49,6 +52,7 @@ class FakeKufar:
         self.detail_calls: list[str] = []
         self.details = details or {}
         self.detail_error = detail_error
+        self.detail_images: dict[str, list[str]] = {}
         self.delay = delay
 
     def fetch(self, query: str) -> list[Ad]:
@@ -61,10 +65,16 @@ class FakeKufar:
         return list(response)
 
     def fetch_detail(self, url: str) -> str:
+        return self.fetch_detail_data(url).body
+
+    def fetch_detail_data(self, url: str) -> AdDetail:
         self.detail_calls.append(url)
         if self.detail_error is not None:
             raise self.detail_error
-        return self.details.get(url, "")
+        return AdDetail(
+            body=self.details.get(url, ""),
+            gallery=list(self.detail_images.get(url, [])),
+        )
 
 
 class FakeNotifier:
@@ -74,6 +84,7 @@ class FakeNotifier:
         self.ad_calls: list[tuple[Ad, str]] = []
         self.analyses: list[object] = []
         self.ai_calls: list[object] = []
+        self.vision_calls: list[object] = []
         self.texts: list[str] = []
         self.text_result = True
         self.closed = False
@@ -84,10 +95,12 @@ class FakeNotifier:
         query: str,
         analysis: object | None = None,
         ai: object | None = None,
+        vision: object | None = None,
     ) -> bool:
         self.ad_calls.append((ad, query))
         self.analyses.append(analysis)
         self.ai_calls.append(ai)
+        self.vision_calls.append(vision)
         return True
 
     async def send_text(self, text: str) -> bool:
@@ -121,6 +134,48 @@ class FakeAnalyzer:
     async def analyze(self, ad, body, regex_analysis, prices):  # type: ignore[no-untyped-def]
         self.calls += 1
         return self.verdict
+
+
+class FakeVisionAnalyzer:
+    """Подделка vision-анализатора."""
+
+    def __init__(self, verdict: VisionVerdict | None) -> None:
+        self.verdict = verdict
+        self.calls = 0
+        self.images: list[object] = []
+
+    async def analyze(self, ad, body, images):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        self.images.append(images)
+        return self.verdict
+
+
+def vision_verdict(
+    *,
+    is_silver: bool = True,
+    item_type: str = "украшение",
+    weight_g: float | None = None,
+    purity: int | None = None,
+    hallmark: str = "не видно",
+    stones_or_costume: bool = False,
+    confidence: float = 0.9,
+    notes: str = "Фото проверено",
+    question: str = "Подтвердите вес",
+) -> VisionVerdict:
+    """Собрать vision-вердикт для тестов."""
+    return VisionVerdict(
+        is_silver=is_silver,
+        item_type=item_type,
+        weight_g=weight_g,
+        purity=purity,
+        hallmark=hallmark,
+        scale_visible=weight_g is not None,
+        stones_or_costume=stones_or_costume,
+        confidence=confidence,
+        notes=notes,
+        question=question,
+        model="fake-vision",
+    )
 
 
 def ai_verdict(
@@ -158,6 +213,7 @@ def make_config(
     require_ai_for_leads: bool = True,
     digest_interval: int = 120,
     digest_max_items: int = 20,
+    vision_max_calls: int = 100,
 ) -> Config:
     """Собрать конфиг для тестов без чтения файлов и env."""
     return Config(
@@ -178,6 +234,8 @@ def make_config(
         proxy_url=None,
         llm_provider="none",
         llm_max_calls_per_day=llm_max_calls,
+        vision_provider="none",
+        vision_max_calls_per_day=vision_max_calls,
     )
 
 
@@ -204,6 +262,7 @@ def make_scheduler(
     kufar: FakeKufar,
     notifier: FakeNotifier,
     analyzer: object | None = None,
+    vision_analyzer: object | None = None,
 ) -> Scheduler:
     """Собрать планировщик на подделках с control/status рядом с тестовой БД."""
     base = storage.db_path.parent
@@ -217,6 +276,7 @@ def make_scheduler(
         scrap_prices_path=base / "scrap_prices.json",
         sleep_inhibitor=FakeSleep(),
         analyzer=analyzer,
+        vision_analyzer=vision_analyzer,
     )
 
 
@@ -997,6 +1057,200 @@ def test_ai_cache_prevents_repeat_call(tmp_path: Path) -> None:
 
     assert analyzer.calls == 1
     assert len(notifier.ad_calls) == 1
+
+
+def stub_vision_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Не скачивать настоящие картинки в тестах."""
+    monkeypatch.setattr(
+        scheduler_module,
+        "download_images",
+        lambda urls, timeout: [("image/jpeg", "ZmFrZQ==")],
+    )
+
+
+def add_detail_image(kufar: FakeKufar, ad: Ad) -> None:
+    """Добавить detail-картинку для vision."""
+    kufar.detail_images[ad.url] = ["https://img.example/1.jpg"]
+
+
+def test_vision_false_high_confidence_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vision is_silver=false + stones/другое при confidence>=0.7 — skip."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(
+        vision_verdict(
+            is_silver=False,
+            item_type="другое",
+            stones_or_costume=True,
+            confidence=0.9,
+        )
+    )
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        vision_analyzer=vision,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 0
+    assert vision.calls == 1
+
+
+def test_vision_weight_and_purity_promote_below(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vision вес/проба пересчитывают лом и дают instant below."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(
+        vision_verdict(
+            is_silver=True,
+            weight_g=10.0,
+            purity=925,
+            hallmark="зубр",
+            confidence=0.95,
+        )
+    )
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        vision_analyzer=vision,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert notifier.vision_calls[0] is vision.verdict
+    saved = storage.get_analysis(ad.ad_id)
+    assert saved is not None
+    assert saved.weight_g == 10.0
+    assert saved.purity == 925
+    assert saved.is_below_scrap is True
+
+
+def test_vision_daily_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """После лимита vision не вызывается, fallback продолжает работать."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ads = [
+        make_ad("1", price_byn=10000, subject="серебро"),
+        make_ad("2", price_byn=10000, subject="серебро"),
+    ]
+    kufar = FakeKufar({query.q: ads})
+    for ad in ads:
+        add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(vision_verdict(weight_g=10.0))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query], vision_max_calls=1),
+        storage,
+        kufar,
+        notifier,
+        vision_analyzer=vision,
+    )
+
+    asyncio.run(scheduler.run_pass(query))
+
+    assert vision.calls == 1
+    assert len(notifier.ad_calls) == 2
+    key = f"vision_calls:{datetime.now(timezone.utc).date().isoformat()}"
+    assert storage.get_meta(key) == "1"
+
+
+def test_vision_cache_prevents_repeat_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Кэш ad_vision не вызывает модель повторно."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(vision_verdict(weight_g=10.0))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        vision_analyzer=vision,
+    )
+
+    asyncio.run(scheduler.run_pass(query))
+    assert vision.calls == 1
+    assert storage.get_vision_verdict(ad.ad_id) is not None
+
+    images = storage.get_ad_detail_images(ad.ad_id)
+    analysis = storage.get_analysis(ad.ad_id)
+    cached = asyncio.run(
+        scheduler._maybe_vision(
+            ad,
+            query,
+            analysis,
+            None,
+            images,
+            default_scrap_prices(),
+            allow_api=True,
+        )
+    )
+    assert cached is not None
+    assert vision.calls == 1
+
+
+def test_vision_none_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vision None не блокирует обычный priority-алерт."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(None)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        vision_analyzer=vision,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert notifier.vision_calls == [None]
 
 
 def test_interval_jitter_bounds() -> None:

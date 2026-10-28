@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.analyzers.base import AiVerdict
+from app.analyzers.vision import VisionVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 from app.storage import Storage
@@ -184,14 +185,42 @@ def test_log_alert(storage: Storage, db_path: Path) -> None:
 
 
 def test_ad_details_roundtrip(storage: Storage) -> None:
-    """Описание объявления сохраняется и перезаписывается."""
+    """Описание и картинки сохраняются и перезаписываются."""
     assert storage.get_ad_detail("1") is None
+    assert storage.get_ad_detail_images("1") == []
 
-    storage.save_ad_detail("1", "первое описание")
+    storage.save_ad_detail("1", "первое описание", images=["https://i/1.jpg"])
     assert storage.get_ad_detail("1") == "первое описание"
+    assert storage.get_ad_detail_images("1") == ["https://i/1.jpg"]
 
     storage.save_ad_detail("1", "второе описание")
     assert storage.get_ad_detail("1") == "второе описание"
+    assert storage.get_ad_detail_images("1") == ["https://i/1.jpg"]
+
+
+def test_vision_verdict_roundtrip(storage: Storage) -> None:
+    """Vision-вердикт кэшируется и читается."""
+    verdict = VisionVerdict(
+        is_silver=True,
+        item_type="украшение",
+        weight_g=10.0,
+        purity=925,
+        hallmark="зубр",
+        scale_visible=True,
+        stones_or_costume=False,
+        confidence=0.9,
+        notes="Видно клеймо",
+        question="Вес?",
+        model="claude-haiku-5-5",
+    )
+    assert storage.get_vision_verdict("1") is None
+    storage.save_vision_verdict("1", verdict)
+    loaded = storage.get_vision_verdict("1")
+    assert loaded is not None
+    assert loaded.weight_g == 10.0
+    assert loaded.purity == 925
+    assert loaded.hallmark == "зубр"
+    assert loaded.notes == "Видно клеймо"
 
 
 def test_ad_analysis_roundtrip(storage: Storage) -> None:
@@ -324,6 +353,30 @@ def test_analysis_columns_migration(tmp_path: Path) -> None:
     finally:
         connection.close()
     assert {"is_suspicious", "is_lead"} <= columns
+
+
+def test_detail_images_column_migration(tmp_path: Path) -> None:
+    """Старая ad_details получает images_json."""
+    db_path = tmp_path / "old_detail.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE ad_details ("
+        "ad_id TEXT PRIMARY KEY, body TEXT, fetched_at TEXT NOT NULL)"
+    )
+    connection.commit()
+    connection.close()
+
+    Storage(db_path)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(ad_details)")
+        }
+    finally:
+        connection.close()
+    assert "images_json" in columns
 
 
 def test_wal_mode_and_busy_timeout(storage: Storage, db_path: Path) -> None:

@@ -43,25 +43,24 @@ images.listings = ["https://rms.kufar.by/v1/list_thumbs_2x/adim1/....jpg", ...]
 
 ## Vision-модель
 
-Основной кандидат — **Gemini 4 Argon Contributor** через OpenCode Go:
+Выбрана **Claude Haiku 5.5** через OpenCode Go:
 
 ```
-https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon-contributor:generateContent
+POST https://opencode.ai/inference/go/anthropic/v1/messages
+Authorization: Bearer <OpenCode Go key>
+anthropic-version: 2023-06-01
+x-opencode-session: ses_silverwatch_ai
 ```
 
-Плюсы: хороший OCR/vision, входит в Go. Минусы: данные могут использоваться
-для обучения; лимит $60/мес; нужен отдельный adapter (Google API, не OpenAI
-chat completions).
-
-Альтернативы:
-
-- **Claude Haiku 5.5** (`/anthropic/v1/messages`) — 30 дней retention, $15/мес;
-- **GPT 6 Luna** (`/openai/v1/responses`) — 30 дней, $15/мес;
-- текстовый fallback — текущий `deepseek-v4.1-flash`.
+Модель принимает base64-изображения, хорошо читает весы и клейма. Тариф
+OpenCode Go (около $15/мес; актуальные цену и лимиты проверяйте у провайдера).
+По данным провайдера, Claude хранит запросы и изображения до 30 дней; проект
+фото на диск не сохраняет.
 
 Правило: vision вызывается только для новых объявлений, где текст не дал
-однозначного ответа (нет веса/пробы, `ask`, лид, подозрительная цена), и не
-чаще `VISION_MAX_CALLS_PER_DAY`.
+однозначного ответа (`is_lead`/`below`/`suspicious`, AI `ask`/`look`) или для
+priority-запроса, и не чаще `VISION_MAX_CALLS_PER_DAY`. Без ключа/провайдера —
+`NullVisionAnalyzer` и текстовый fallback.
 
 ## Vision-ответ (строгий JSON)
 
@@ -71,10 +70,9 @@ chat completions).
   "item_type": "украшение|лом|монеты|столовое|другое",
   "weight_g": 101.32,
   "purity": 925,
-  "hallmark": "зубр|кокошник|925|нет|не видно",
+  "hallmark": "зубр|кокошник|925|875|нет|не видно",
   "scale_visible": true,
   "stones_or_costume": false,
-  "condition": "новое|б/у|не видно",
   "confidence": 0.0,
   "notes": "1–2 фразы",
   "question": "что уточнить у продавца"
@@ -88,39 +86,41 @@ chat completions).
 
 Приоритет:
 
-1. `below_scrap` / `suspicious` — instant, как сейчас.
-2. Vision подтвердил вес/пробу и цена ниже/около лома — instant `💰/🟡`.
-3. AI `look` + confidence ≥ 0.8 — instant `🟡`.
-4. AI `ask` + confidence ≥ 0.9 и цена ≤ `lead_max_price_byn` — instant
-   `❓ УТОЧНИТЬ`.
-5. Остальные `ask`/лиды — **дайджест 1–2 раза в день**, не instant.
-6. `skip`, не-серебро, одежда/цвет/посеребрение — не отправлять.
-7. Нет AI/vision (ключ истёк, ошибка) — fallback: только below/suspicious и
-   приоритетные запросы; обычные лиды не спамить.
+1. `below_scrap` / `suspicious` — instant.
+2. Vision подтвердил вес/пробу и цена ниже лома — instant.
+3. AI `look` — instant с `🤖`/`❓`.
+4. Priority-запрос + AI `is_silver=true` — instant.
+5. AI `ask` из обычного запроса или priority без серебра — **дайджест**,
+   а не instant.
+6. Vision `is_silver=false` + confidence≥0.7 + камни/другой тип — skip.
+7. `skip`, одежда/цвет/посеребрение — не отправлять.
+8. Нет AI/vision (ключ истёк, ошибка) — fallback: below/suspicious и
+   priority; обычные лиды не спамить.
 
 ## Конфиг (проект)
 
 ```env
-VISION_PROVIDER=google|anthropic|openai|none
-VISION_MODEL=gemini-4-argon-contributor
-VISION_BASE_URL=https://opencode.ai/inference/go/google/v1beta
+VISION_PROVIDER=none|anthropic
+VISION_MODEL=claude-haiku-5-5
+VISION_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_API_KEY=oc_sk_...       # пусто — используется LLM_API_KEY
 VISION_MAX_CALLS_PER_DAY=100
 VISION_MAX_IMAGES=3
-VISION_TIMEOUT=45
-
-AI_MIN_CONFIDENCE_INSTANT=0.8
-AI_MIN_CONFIDENCE_ASK=0.9
-LEAD_DIGEST_INTERVAL_MIN=720
+VISION_TIMEOUT=60
 ```
+
+`lead_digest_interval_min` и `lead_digest_max_items` задаются в
+`config.yaml` (120 и 20), а не в `.env`.
 
 ## Этапы
 
 1. Документация (этот файл, SECURITY, AGENTS, ARCHITECTURE, FILTERING).
-2. `app/images.py`: URL из detail, скачивание, base64, лимит размера.
-3. `app/analyzers/vision.py`: Gemini adapter + JSON-валидация + fallback.
-4. Интеграция в scheduler: vision только для кандидатов, кэш `ad_vision`.
-5. Фильтр: instant/digest/skip, пороги confidence.
-6. Тесты на моках + локальные примеры фото.
+2. `app/images.py`: URL из detail, скачивание, base64, лимит 5 МБ.
+3. `app/analyzers/vision.py`: Claude Haiku adapter, JSON-валидация, retry/fallback.
+4. Интеграция в scheduler: vision только для новых кандидатов, кэш `ad_vision`,
+   дневной лимит `vision_calls:YYYY-MM-DD`.
+5. Фильтр: instant/digest/skip; ask — в очередь дайджеста.
+6. Тесты на моках без live-запросов и без хранения фото.
 7. Dry-run на 1–2 дня, затем включить.
 
 ## Метрики приёмки

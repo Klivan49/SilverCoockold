@@ -82,6 +82,45 @@ def test_fetch_detail_broken_next_data() -> None:
     assert caught.value.kind == "parse"
 
 
+def test_fetch_detail_data_images() -> None:
+    """fetch_detail_data возвращает body, gallery и listings."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=detail_html())
+
+    detail = make_client(handler).fetch_detail_data(
+        "https://www.kufar.by/item/1"
+    )
+
+    assert detail.body.startswith("Серебро 925")
+    assert detail.gallery == [
+        "https://img.example/1.jpg",
+        "https://img.example/2.jpg",
+    ]
+    assert detail.listings == ["https://img.example/3.jpg"]
+    assert make_client(handler).fetch_detail("https://www.kufar.by/item/1") == detail.body
+
+
+def test_fetch_detail_data_without_images() -> None:
+    """Нет images — пустые списки, без ошибки."""
+    html = (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        '{"props":{"initialState":{"adView":{"data":{"body":"текст"}}}}}'
+        "</script></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html)
+
+    detail = make_client(handler).fetch_detail_data(
+        "https://www.kufar.by/item/1"
+    )
+
+    assert detail.body == "текст"
+    assert detail.gallery == []
+    assert detail.listings == []
+
+
 def test_fetch_detail_bad_structure() -> None:
     """Неверная структура data тоже даёт KufarError."""
     html = (

@@ -8,20 +8,28 @@ import logging
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
 
 from app.analyzers.base import AiVerdict, Analyzer
-from app.analyzers.factory import build_analyzer
+from app.analyzers.factory import build_analyzer, build_vision_analyzer
 from app.analyzers.null import NullAnalyzer
+from app.analyzers.vision import NullVisionAnalyzer, VisionVerdict
 from app.config import Config, QueryConfig
 from app.control import DEFAULT_CONTROL_PATH, ControlState, read_control, write_control
-from app.kufar import KufarClient, KufarError
+from app.images import download_images, pick_images
+from app.kufar import AdDetail, KufarClient, KufarError
 from app.models import Ad
 from app.notifier import Notifier
-from app.scrap import DEFAULT_SCRAP_PATH, ScrapPrices, load_scrap_prices
+from app.scrap import (
+    DEFAULT_SCRAP_PATH,
+    ScrapPrices,
+    effective_purity,
+    load_scrap_prices,
+    scrap_rate,
+)
 from app.silver import SilverAnalysis, analyze_ad
 from app.sleep import SleepInhibitor
 from app.status import DEFAULT_STATUS_PATH, write_status
@@ -99,6 +107,7 @@ class Scheduler:
         scrap_prices_path: str | Path | None = None,
         sleep_inhibitor: SleepInhibitor | None = None,
         analyzer: Analyzer | None = None,
+        vision_analyzer: object | None = None,
     ) -> None:
         self.config = config
         self.kufar = kufar
@@ -109,6 +118,9 @@ class Scheduler:
         self.scrap_prices_path = Path(scrap_prices_path or DEFAULT_SCRAP_PATH)
         self.sleep = sleep_inhibitor or SleepInhibitor()
         self.analyzer = analyzer or build_analyzer(config)
+        self.vision_analyzer = (
+            vision_analyzer or build_vision_analyzer(config)
+        )
         self._http_lock = asyncio.Lock()
         self._manual_scan_lock = asyncio.Lock()
         self._wake = asyncio.Event()
@@ -135,30 +147,38 @@ class Scheduler:
         async with self._http_lock:
             return await asyncio.to_thread(self.kufar.fetch, query)
 
-    async def _fetch_detail(self, url: str) -> str:
+    async def _fetch_detail_data(self, url: str) -> AdDetail:
         """Загрузить detail-страницу под тем же глобальным HTTP lock."""
         async with self._http_lock:
-            return await asyncio.to_thread(self.kufar.fetch_detail, url)
+            return await asyncio.to_thread(self.kufar.fetch_detail_data, url)
 
-    async def _get_body(self, ad: Ad) -> str | None:
-        """Взять body из кэша/raw или загрузить detail; при ошибке None."""
+    async def _get_detail_data(
+        self, ad: Ad
+    ) -> tuple[str | None, list[str]]:
+        """Взять body и картинки из кэша/raw или загрузить detail."""
         cached = self.storage.get_ad_detail(ad.ad_id)
         if cached is not None:
-            return cached
+            return cached, self.storage.get_ad_detail_images(ad.ad_id)
 
         raw_body = ad.raw.get("body") if isinstance(ad.raw, dict) else None
         if isinstance(raw_body, str) and raw_body.strip():
-            self.storage.save_ad_detail(ad.ad_id, raw_body)
-            return raw_body
+            self.storage.save_ad_detail(ad.ad_id, raw_body, images=[])
+            return raw_body, []
 
         try:
-            body = await self._fetch_detail(ad.url)
+            detail = await self._fetch_detail_data(ad.url)
         except Exception:
             logger.exception(
                 "Kufar detail: не удалось получить описание ad_id=%s", ad.ad_id
             )
-            return None
-        self.storage.save_ad_detail(ad.ad_id, body)
+            return None, []
+        images = list(dict.fromkeys([*detail.gallery, *detail.listings]))
+        self.storage.save_ad_detail(ad.ad_id, detail.body, images=images)
+        return detail.body, images
+
+    async def _get_body(self, ad: Ad) -> str | None:
+        """Взять body из detail-кэша."""
+        body, _ = await self._get_detail_data(ad)
         return body
 
     async def run_manual_scan(self) -> dict[str, int]:
@@ -322,13 +342,160 @@ class Scheduler:
         )
         return verdict
 
-    async def _analyze_new_ad(
-        self, ad: Ad, prices: ScrapPrices
-    ) -> SilverAnalysis | None:
-        """Загрузить detail (если нужно) и сохранить разбор нового ad."""
-        body = await self._get_body(ad)
+    def _merge_vision_analysis(
+        self,
+        analysis: SilverAnalysis,
+        vision: VisionVerdict,
+        prices: ScrapPrices,
+    ) -> SilverAnalysis:
+        """Обновить разбор весом/пробой/клеймом с фото."""
+        hallmark = vision.hallmark.strip().lower()
+        weight = (
+            vision.weight_g if vision.weight_g is not None else analysis.weight_g
+        )
+        purity = vision.purity if vision.purity is not None else analysis.purity
+        if hallmark in {"925", "875"} and purity is None:
+            purity = int(hallmark)
+        if hallmark in {"зубр", "кокошник"} and purity is None:
+            purity = 925
+        has_hallmark = hallmark in {"зубр", "кокошник", "925", "875"}
+        effective = effective_purity(purity, has_hallmark, prices)
+
+        total: float | None = None
+        ppg: float | None = None
+        if analysis.price_byn is not None:
+            if analysis.per_gram_pricing:
+                ppg = analysis.price_byn
+                if weight is not None:
+                    total = ppg * weight
+            else:
+                total = analysis.price_byn
+                if weight is not None and weight > 0:
+                    ppg = total / weight
+
+        rate = scrap_rate(prices, effective)
+        scrap = (
+            rate * weight
+            if rate is not None and weight is not None
+            else None
+        )
+        suspicious = bool(
+            ppg is not None
+            and (
+                ppg < 1.0
+                or (rate is not None and ppg < rate * 0.15)
+            )
+        )
+        below = bool(
+            total is not None
+            and scrap is not None
+            and total < scrap
+            and not suspicious
+        )
+        notes = analysis.note
+        if vision.notes:
+            notes = f"{notes}; vision: {vision.notes}" if notes else vision.notes
+
+        return replace(
+            analysis,
+            weight_g=weight,
+            purity=purity,
+            effective_purity=effective,
+            price_per_gram=ppg,
+            scrap_price=scrap,
+            is_below_scrap=below,
+            is_suspicious=suspicious,
+            is_silver=analysis.is_silver or vision.is_silver,
+            is_lead=analysis.is_lead and (weight is None or purity is None),
+            note=notes,
+        )
+
+    async def _maybe_vision(
+        self,
+        ad: Ad,
+        query: QueryConfig,
+        analysis: SilverAnalysis | None,
+        ai: AiVerdict | None,
+        images: list[str],
+        prices: ScrapPrices,
+        *,
+        allow_api: bool,
+    ) -> VisionVerdict | None:
+        """Получить/запросить vision-вердикт для кандидата с картинками."""
+        if isinstance(self.vision_analyzer, NullVisionAnalyzer):
+            return None
+        cached = self.storage.get_vision_verdict(ad.ad_id)
+        if cached is not None:
+            return cached
+        if not allow_api or not images or analysis is None:
+            return None
+        if not (
+            analysis.is_lead
+            or analysis.is_below_scrap
+            or analysis.is_suspicious
+            or (ai is not None and ai.verdict in {"ask", "look"})
+            or query.notify
+        ):
+            return None
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        calls_key = f"vision_calls:{today}"
+        try:
+            calls = int(self.storage.get_meta(calls_key) or 0)
+        except ValueError:
+            calls = 0
+        if calls >= self.config.vision_max_calls_per_day:
+            logger.info(
+                "vision: дневной лимит %d исчерпан",
+                self.config.vision_max_calls_per_day,
+            )
+            return None
+
+        body = self.storage.get_ad_detail(ad.ad_id)
+        if body is None:
+            body = await self._get_body(ad)
         if body is None:
             return None
+
+        detail = AdDetail(body=body, gallery=images, listings=[])
+        urls = pick_images(detail, self.config.vision_max_images)
+        try:
+            pairs = await asyncio.to_thread(
+                download_images, urls, self.config.vision_timeout
+            )
+        except Exception:
+            logger.exception("vision: ошибка скачивания фото ad_id=%s", ad.ad_id)
+            return None
+        if not pairs:
+            logger.info("vision: нет пригодных фото ad_id=%s", ad.ad_id)
+            return None
+
+        self.storage.set_meta(calls_key, str(calls + 1))
+        try:
+            verdict = await self.vision_analyzer.analyze(ad, body, pairs)
+        except Exception:
+            logger.exception("vision: ошибка анализа ad_id=%s", ad.ad_id)
+            return None
+        if verdict is None:
+            logger.info("vision: fallback для ad_id=%s", ad.ad_id)
+            return None
+        self.storage.save_vision_verdict(ad.ad_id, verdict)
+        logger.info(
+            "vision: ad_id=%s is_silver=%s type=%s confidence=%.2f",
+            ad.ad_id,
+            verdict.is_silver,
+            verdict.item_type,
+            verdict.confidence,
+        )
+        return verdict
+
+    async def _analyze_new_ad(
+        self, ad: Ad, prices: ScrapPrices
+    ) -> tuple[SilverAnalysis | None, list[str]]:
+        """Загрузить detail и сохранить разбор нового ad; вернуть и картинки."""
+        body, images = await self._get_detail_data(ad)
+        if body is None:
+            return None, images
         try:
             analysis = analyze_ad(
                 ad,
@@ -339,9 +506,9 @@ class Scheduler:
             )
         except Exception:
             logger.exception("silver: не удалось разобрать ad_id=%s", ad.ad_id)
-            return None
+            return None, images
         self.storage.save_analysis(ad.ad_id, analysis)
-        return analysis
+        return analysis, images
 
     async def _regular_pass(
         self,
@@ -375,10 +542,12 @@ class Scheduler:
                 continue
 
             analysis: SilverAnalysis | None = None
+            images: list[str] = []
             if is_new:
-                analysis = await self._analyze_new_ad(ad, prices)
+                analysis, images = await self._analyze_new_ad(ad, prices)
             else:
                 analysis = self.storage.get_analysis(ad.ad_id)
+                images = self.storage.get_ad_detail_images(ad.ad_id)
 
             ai = await self._maybe_ai(
                 ad,
@@ -387,12 +556,38 @@ class Scheduler:
                 prices,
                 allow_api=is_new,
             )
-
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
             if ai is not None and ai.verdict == "skip":
                 logger.info("AI: skip ad_id=%s", ad.ad_id)
                 continue
+            vision = await self._maybe_vision(
+                ad,
+                query,
+                analysis,
+                ai,
+                images,
+                prices,
+                allow_api=is_new,
+            )
+            if (
+                vision is not None
+                and not vision.is_silver
+                and vision.confidence >= 0.7
+                and (
+                    vision.stones_or_costume
+                    or vision.item_type == "другое"
+                )
+            ):
+                logger.info("vision: не серебро ad_id=%s", ad.ad_id)
+                continue
+            if vision is not None and analysis is not None and (
+                vision.weight_g is not None
+                or vision.purity is not None
+                or vision.hallmark in {"зубр", "кокошник", "925", "875"}
+            ):
+                analysis = self._merge_vision_analysis(analysis, vision, prices)
+                self.storage.save_analysis(ad.ad_id, analysis)
 
             instant = False
             queue_reason: str | None = None
@@ -440,7 +635,9 @@ class Scheduler:
                 skipped += 1
                 continue
 
-            ok = await self.notifier.send_ad(ad, query.q, analysis, ai)
+            ok = await self.notifier.send_ad(
+                ad, query.q, analysis, ai, vision
+            )
             self.storage.mark_instant_alerted(ad.ad_id)
             self.storage.log_alert(
                 ad.ad_id,
@@ -504,13 +701,24 @@ class Scheduler:
         else:
             question = "Уточните вес, пробу и клеймо."
 
-        url = html.escape(str(item.get("url") or ""), quote=False)
-        return (
-            f"{index}. {title} — {price}\n"
-            f"   🤖 {html.escape(notes.strip()[:200], quote=False)}\n"
-            f"   ❓ {html.escape(question.strip()[:200], quote=False)}\n"
-            f"   {url}"
+        vision = self.storage.get_vision_verdict(ad_id)
+        if vision is not None and vision.question:
+            question = vision.question
+        lines = [
+            f"{index}. {title} — {price}",
+            f"   🤖 {html.escape(notes.strip()[:200], quote=False)}",
+        ]
+        if vision is not None and vision.notes:
+            lines.append(
+                f"   📷 {html.escape(vision.notes.strip()[:200], quote=False)}"
+            )
+        lines.extend(
+            [
+                f"   ❓ {html.escape(question.strip()[:200], quote=False)}",
+                f"   {html.escape(str(item.get('url') or ''), quote=False)}",
+            ]
         )
+        return "\n".join(lines)
 
     async def send_lead_digest_if_due(self) -> bool:
         """Отправить накопившиеся ask/лид-алерты, если интервал истёк."""

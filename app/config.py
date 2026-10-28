@@ -72,6 +72,13 @@ class Config:
     llm_session_id: str = "ses_silverwatch_ai"
     llm_max_calls_per_day: int = 200
     llm_timeout: float = 20.0
+    vision_provider: str = "none"
+    vision_model: str = "claude-haiku-5-5"
+    vision_base_url: str = "https://opencode.ai/inference/go/anthropic/v1"
+    vision_api_key: str | None = None
+    vision_max_calls_per_day: int = 100
+    vision_max_images: int = 3
+    vision_timeout: float = 60.0
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -325,6 +332,37 @@ def load_config(config_path: Path | None = None) -> Config:
         os.getenv("LLM_TIMEOUT"), "LLM_TIMEOUT", 20.0
     )
 
+    vision_provider = (os.getenv("VISION_PROVIDER") or "none").strip().lower()
+    if vision_provider in {"", "null"}:
+        vision_provider = "none"
+    if vision_provider not in {"none", "anthropic"}:
+        raise ConfigError("VISION_PROVIDER: допустимые значения none, anthropic")
+    vision_base_url = (
+        (os.getenv("VISION_BASE_URL") or "").strip()
+        or "https://opencode.ai/inference/go/anthropic/v1"
+    )
+    parsed_vision = urlparse(vision_base_url)
+    if parsed_vision.scheme not in {"http", "https"} or not parsed_vision.netloc:
+        raise ConfigError("VISION_BASE_URL должен быть полным http(s)-адресом")
+    vision_api_key = (
+        (os.getenv("VISION_API_KEY") or "").strip()
+        or llm_api_key
+    )
+    vision_model = (
+        (os.getenv("VISION_MODEL") or "").strip() or "claude-haiku-5-5"
+    )
+    vision_max_calls = _env_positive_int(
+        os.getenv("VISION_MAX_CALLS_PER_DAY"),
+        "VISION_MAX_CALLS_PER_DAY",
+        100,
+    )
+    vision_max_images = _env_positive_int(
+        os.getenv("VISION_MAX_IMAGES"), "VISION_MAX_IMAGES", 3
+    )
+    vision_timeout = _env_positive_number(
+        os.getenv("VISION_TIMEOUT"), "VISION_TIMEOUT", 60.0
+    )
+
     if not dry_run and token is None:
         raise ConfigError("при DRY_RUN=0 обязателен TELEGRAM_BOT_TOKEN")
     if not dry_run and not chat_ids:
@@ -352,4 +390,11 @@ def load_config(config_path: Path | None = None) -> Config:
         llm_session_id=llm_session_id,
         llm_max_calls_per_day=llm_max_calls,
         llm_timeout=llm_timeout,
+        vision_provider=vision_provider,
+        vision_model=vision_model,
+        vision_base_url=vision_base_url,
+        vision_api_key=vision_api_key,
+        vision_max_calls_per_day=vision_max_calls,
+        vision_max_images=vision_max_images,
+        vision_timeout=vision_timeout,
     )

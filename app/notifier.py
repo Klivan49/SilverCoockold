@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.analyzers.base import AiVerdict
+from app.analyzers.vision import VisionVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 
@@ -52,6 +53,7 @@ def format_ad_message(
     query: str,
     analysis: SilverAnalysis | None = None,
     ai: AiVerdict | None = None,
+    vision: VisionVerdict | None = None,
 ) -> str:
     """Собрать HTML-сообщение о новом объявлении."""
     safe_query = html.escape(query, quote=False)
@@ -109,6 +111,18 @@ def format_ad_message(
         lines.append(f"🤖 {html.escape(ai.reason.strip()[:400], quote=False)}")
     if ai is not None and ai.question:
         lines.append(f"❓ {html.escape(ai.question.strip()[:400], quote=False)}")
+    if vision is not None and vision.notes:
+        lines.append(
+            f"📷 {html.escape(vision.notes.strip()[:400], quote=False)}"
+        )
+    if (
+        vision is not None
+        and vision.question
+        and (ai is None or not ai.question)
+    ):
+        lines.append(
+            f"❓ {html.escape(vision.question.strip()[:400], quote=False)}"
+        )
     lines.append(safe_url)
 
     text = "\n".join(lines)
@@ -181,10 +195,11 @@ class Notifier:
         query: str,
         analysis: SilverAnalysis | None = None,
         ai: AiVerdict | None = None,
+        vision: VisionVerdict | None = None,
     ) -> bool:
         """Отправить уведомление о новом объявлении с кнопкой скана."""
         return await self.send_text(
-            format_ad_message(ad, query, analysis, ai),
+            format_ad_message(ad, query, analysis, ai, vision),
             reply_markup=scan_keyboard(),
         )
 

@@ -485,6 +485,33 @@ LLM_TIMEOUT=20
 
 AI не заменяет проверку клейма и веса: он может ошибаться, поэтому фото и вопрос продавцу всё равно важны. Автосообщений продавцам нет.
 
+### Фото-анализ Claude Haiku
+
+Vision смотрит 1–3 фотографии объявления и пытается прочитать вес на весах, клеймо/пробу, отличить серебро от посеребрения/бижутерии и заметить камни. Фото берутся из detail-страницы: сначала `images.gallery`, затем `images.listings`; на диск не сохраняются, передаются в API как base64.
+
+```env
+VISION_PROVIDER=anthropic
+VISION_MODEL=claude-haiku-5-5
+VISION_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_API_KEY=oc_sk_...        # можно не задавать, тогда берётся LLM_API_KEY
+VISION_MAX_CALLS_PER_DAY=100
+VISION_MAX_IMAGES=3
+VISION_TIMEOUT=60
+```
+
+По умолчанию `VISION_PROVIDER=none` — vision выключен. Модель работает через OpenCode Go (Claude Haiku 5.5, тариф Go; актуальную цену и лимиты проверяйте у провайдера). По данным провайдера, Claude хранит запросы/изображения до 30 дней; проект сам фото не хранит.
+
+Vision вызывается только для новых объявлений и только для кандидатов: `is_lead` / `below` / `suspicious`, AI `ask`/`look` или priority-запрос. Дневной лимит — `meta.vision_calls:YYYY-MM-DD`; вердикт кэшируется в `ad_vision`, повторно не запрашивается.
+
+Слияние:
+
+- vision `is_silver=false` + `confidence>=0.7` + (`stones_or_costume` или `item_type=другое`) — skip;
+- найден вес/проба/клеймо — `ad_analysis` пересчитывается, при цене ниже лома отправляется instant;
+- `📷` заметки и `❓` вопрос добавляются в сообщение;
+- ошибка/таймаут/лимит — текстовый fallback, priority и below/suspicious не блокируются.
+
+Фото помогают, но не заменяют проверку клейма и состояния: модель может ошибиться.
+
 ---
 
 ## UI и управление
@@ -622,6 +649,13 @@ systemctl --user restart silverwatch
 | `LLM_MODEL` | нет | модель, по умолчанию `deepseek-chat` |
 | `LLM_MAX_CALLS_PER_DAY` | нет | дневной лимит вызовов, по умолчанию 200 |
 | `LLM_TIMEOUT` | нет | таймаут AI-запроса, секунды, по умолчанию 20 |
+| `VISION_PROVIDER` | нет | `none` (по умолчанию) или `anthropic` |
+| `VISION_MODEL` | нет | `claude-haiku-5-5` |
+| `VISION_BASE_URL` | нет | Anthropic-совместимый endpoint |
+| `VISION_API_KEY` | нет | ключ vision; пусто — используется `LLM_API_KEY` |
+| `VISION_MAX_CALLS_PER_DAY` | нет | дневной лимит vision, по умолчанию 100 |
+| `VISION_MAX_IMAGES` | нет | 1–3 фото на объявление |
+| `VISION_TIMEOUT` | нет | таймаут vision, секунды, по умолчанию 60 |
 
 \* Достаточно `TELEGRAM_CHAT_IDS` или старого `TELEGRAM_CHAT_ID` — хотя бы одно поле.
 

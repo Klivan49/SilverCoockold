@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 
 from app import notifier as notifier_module
 from app.analyzers.base import AiVerdict
+from app.analyzers.vision import VisionVerdict
 from app.models import Ad
 from app.notifier import Notifier, format_ad_message
 from app.silver import SilverAnalysis
@@ -201,6 +202,29 @@ def test_ai_look_prefix_and_below_priority() -> None:
     assert format_ad_message(make_ad(), "q", below, look).startswith(
         "💰 НИЖЕ ЛОМА\n"
     )
+
+
+def test_vision_block_and_duplicate_question() -> None:
+    """Vision notes/question добавляются, вопрос AI не дублируется."""
+    vision = VisionVerdict(
+        is_silver=True,
+        item_type="украшение",
+        weight_g=10.0,
+        purity=925,
+        hallmark="зубр",
+        scale_visible=True,
+        stones_or_costume=False,
+        confidence=0.9,
+        notes="Видно клеймо <925>",
+        question="Есть ли клеймо?",
+        model="claude-haiku-5-5",
+    )
+    ai = make_ai(question="Есть ли клеймо?")
+
+    text = format_ad_message(make_ad(), "серебро", make_analysis(), ai, vision)
+
+    assert "📷 Видно клеймо &lt;925&gt;" in text
+    assert text.count("❓ Есть ли клеймо?") == 1
 
 
 def test_long_subject_is_truncated() -> None:

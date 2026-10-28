@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -37,6 +38,32 @@ DETAIL_HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "ru-RU,ru;q=0.9",
 }
+
+
+@dataclass
+class AdDetail:
+    """Данные detail-страницы объявления."""
+
+    body: str
+    gallery: list[str] = field(default_factory=list)
+    listings: list[str] = field(default_factory=list)
+
+
+def _image_urls(raw: Any) -> list[str]:
+    """Достать URL из списка строк/объектов images."""
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            url = item
+        elif isinstance(item, dict):
+            url = item.get("url") or item.get("image") or item.get("src")
+        else:
+            continue
+        if isinstance(url, str) and url.startswith("http") and url not in result:
+            result.append(url)
+    return result
 
 
 class KufarError(Exception):
@@ -164,7 +191,11 @@ class KufarClient:
             )
 
     def fetch_detail(self, url: str) -> str:
-        """Получить тело описания с detail-страницы объявления."""
+        """Получить тело описания (совместимый фасад fetch_detail_data)."""
+        return self.fetch_detail_data(url).body
+
+    def fetch_detail_data(self, url: str) -> AdDetail:
+        """Получить body и картинки detail-страницы объявления."""
         attempt = 0
         started = time.monotonic()
 
@@ -249,14 +280,22 @@ class KufarClient:
                 raise KufarError(
                     "Kufar detail: нет body/description", kind="parse"
                 )
+            images = data.get("images")
+            gallery = _image_urls(
+                images.get("gallery") if isinstance(images, dict) else None
+            )
+            listings = _image_urls(
+                images.get("listings") if isinstance(images, dict) else None
+            )
 
             elapsed_ms = int((time.monotonic() - started) * 1000)
             logger.info(
-                "Kufar detail: HTTP 200, символов %d, %d мс",
+                "Kufar detail: HTTP 200, символов %d, картинок %d, %d мс",
                 len(body),
+                len(gallery) + len(listings),
                 elapsed_ms,
             )
-            return body
+            return AdDetail(body=body, gallery=gallery, listings=listings)
 
     def _parse(self, response: httpx.Response, query: str) -> list[Ad]:
         """Разобрать JSON-ответ, пропуская битые объявления."""

@@ -13,7 +13,7 @@ regex-анализ (вес, проба, цена/грамм, лом, лид)
    ↓
 AI текст (OpenCode Go / DeepSeek V4.1 Flash)
    ↓
-AI фото (план: Gemini 4 Argon Contributor)
+AI фото (Claude Haiku 5.5 через OpenCode Go)
    ↓
 решение: skip / digest / instant
    ↓
@@ -26,13 +26,14 @@ Telegram (текст + кнопка скана)
 |---|---|
 | `app/kufar.py` | поиск `size=100`, detail `#__NEXT_DATA__`, retries 429/5xx, `KufarError.kind` |
 | `app/models.py` | `Ad` |
-| `app/storage.py` | SQLite: `ads`, `ad_details`, `ad_analysis`, `ad_ai`, `alerts`, `meta`; WAL |
+| `app/storage.py` | SQLite: `ads`, `ad_details`, `ad_analysis`, `ad_ai`, `ad_vision`, `pending_alerts`, `alerts`, `meta`; WAL |
+| `app/images.py` | выбор 1–3 фото, скачивание, base64, лимит 5 МБ |
 | `app/silver.py` | вес/проба/цена, `is_silver`, `is_lead`, `is_suspicious`, `per_gram` |
 | `app/scrap.py` | цены лома по пробам, `data/scrap_prices.json`, hallmark |
 | `app/analyzers/base.py` | `AiVerdict`, `Analyzer` Protocol |
 | `app/analyzers/deepseek.py` | OpenAI-compatible chat/completions, JSON, retries |
-| `app/analyzers/vision.py` | (план) Gemini/Claude vision adapter |
-| `app/analyzers/factory.py` | выбор `none/deepseek/openai` |
+| `app/analyzers/vision.py` | Claude Haiku 5.5 (Anthropic Messages API), JSON, retry/fallback |
+| `app/analyzers/factory.py` | выбор текстового (`none/deepseek/openai`) и vision (`none/anthropic`) |
 | `app/scheduler.py` | per-query циклы, bootstrap/catchup, AI, фильтр, watchdog |
 | `app/notifier.py` | Telegram HTML, префиксы, inline-кнопка, dry-run |
 | `app/telegram_control.py` | long polling, `/start`, `/scan`, `/status`, кулдаун |
@@ -48,9 +49,11 @@ Telegram (текст + кнопка скана)
 ## БД
 
 - `ads(ad_id PK, query, subject, price_byn, url, list_time, first_seen, last_seen, raw_json, instant_alerted)`
-- `ad_details(ad_id PK, body, fetched_at)`
+- `ad_details(ad_id PK, body, fetched_at, images_json)`
 - `ad_analysis(ad_id PK, weight_g, purity, effective_purity, price_byn, price_per_gram, scrap_price, is_below_scrap, note, parsed_at, is_suspicious, is_lead)`
 - `ad_ai(ad_id PK, verdict_json, created_at)`
+- `ad_vision(ad_id PK, verdict_json, created_at)`
+- `pending_alerts(ad_id PK, query, reason, queued_at, sent_at)`
 - `alerts(id, ad_id, query, sent_at, ok, error)`
 - `meta(key PK, value)`
 
@@ -77,18 +80,23 @@ Telegram (текст + кнопка скана)
 - только новые ad, не bootstrap/catchup;
 - текстовый AI: если regex `is_silver`/`is_lead`/`notify`/hint;
 - кэш `ad_ai`; дневной лимит;
-- `skip` → не отправлять; `ask`/`look` → отправить с `🤖`/`❓`;
+- `skip` → не отправлять; `look` → instant; `ask` → очередь дайджеста
+  (priority + `is_silver=true` — instant);
 - при ошибке/лимите — fallback.
 
-## Фото (план)
+## Фото
 
-- detail `images.gallery`/`listings` — публичные URL `rms.kufar.by`;
-- 1–3 изображения, не хранить;
+- detail `images.gallery`/`listings` — публичные URL;
+- 1–3 изображения, base64, лимит 5 МБ, на диск не сохраняются;
+- модель Claude Haiku 5.5 через OpenCode Go, endpoint `/anthropic/v1/messages`;
 - vision JSON: `is_silver`, `item_type`, `weight_g`, `purity`, `hallmark`,
   `scale_visible`, `stones_or_costume`, `confidence`, `notes`, `question`;
-- vision только для кандидатов (`ask`/lead/below/suspicious), не для всех;
+- vision только для новых кандидатов (`ask`/look/lead/below/suspicious/priority),
+  кэш `ad_vision`, дневной лимит `vision_calls:YYYY-MM-DD`;
+- `is_silver=false` + confidence≥0.7 + камни/другой тип → skip;
 - если vision нашёл вес/пробу — обновить `ad_analysis`, пересчитать лом;
-- ошибка vision → текстовый fallback.
+  ниже лома → instant;
+- ошибка/None → текстовый fallback, priority не блокируется.
 
 ## Деплой
 
