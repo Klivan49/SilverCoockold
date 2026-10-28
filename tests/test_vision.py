@@ -104,7 +104,7 @@ def test_vision_parses_verdict_and_payload() -> None:
     assert seen["headers"]["x-opencode-session"] == "ses_silverwatch_ai"
     payload = seen["payload"]
     assert payload["model"] == "claude-haiku-5-5"
-    assert payload["max_tokens"] == 700
+    assert payload["max_tokens"] == 1200
     image = payload["messages"][0]["content"][1]
     assert image["source"]["type"] == "base64"
     assert image["source"]["media_type"] == "image/jpeg"
