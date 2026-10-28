@@ -119,11 +119,13 @@ class VisionAnalyzer:
         )
         raw = ad.raw if isinstance(ad.raw, dict) else {}
         prompt = (
-            f"Название: {ad.subject or ''}\n"
-            f"Цена: {price}\n"
-            f"Категория: {str(raw.get('category') or '')[:200]}\n"
-            f"Регион: {str(raw.get('region') or '')[:200]}\n"
-            f"Описание: {(body or '')[:2500]}"
+            VISION_PROMPT
+            + "\n\n"
+            + f"Название: {ad.subject or ''}\n"
+            + f"Цена: {price}\n"
+            + f"Категория: {str(raw.get('category') or '')[:200]}\n"
+            + f"Регион: {str(raw.get('region') or '')[:200]}\n"
+            + f"Описание: {(body or '')[:2500]}"
         )
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         for mime, data in images[: self.max_images]:
@@ -139,7 +141,7 @@ class VisionAnalyzer:
             )
         return {
             "model": self.model,
-            "max_tokens": 700,
+            "max_tokens": 1200,
             "messages": [
                 {"role": "user", "content": content},
             ],
