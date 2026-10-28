@@ -73,12 +73,19 @@ class Config:
     llm_max_calls_per_day: int = 200
     llm_timeout: float = 20.0
     vision_provider: str = "none"
-    vision_model: str = "claude-haiku-5-5"
-    vision_base_url: str = "https://opencode.ai/inference/go/anthropic/v1"
+    vision_model: str = "deepseek-v4.1-flash"
+    vision_base_url: str = "https://opencode.ai/inference/go/openai/v1"
     vision_api_key: str | None = None
     vision_max_calls_per_day: int = 100
     vision_max_images: int = 3
     vision_timeout: float = 60.0
+    vision_fallback_provider: str = "anthropic"
+    vision_fallback_model: str = "claude-haiku-5-5"
+    vision_fallback_base_url: str = (
+        "https://opencode.ai/inference/go/anthropic/v1"
+    )
+    vision_fallback_api_key: str | None = None
+    vision_min_confidence_fallback: float = 0.5
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -222,6 +229,19 @@ def _env_positive_number(
     return parsed
 
 
+def _env_confidence(value: str | None, name: str, default: float) -> float:
+    """Разобрать порог уверенности в диапазоне 0..1 из env."""
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = float(value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name}: ожидается число") from exc
+    if not (0.0 <= parsed <= 1.0):
+        raise ConfigError(f"{name}: должно быть в диапазоне 0..1")
+    return parsed
+
+
 def _parse_id_list(value: str | None, name: str) -> list[str]:
     """Разобрать список ID через запятую: пробелы и пустые элементы допустимы."""
     if value is None or not value.strip():
@@ -335,21 +355,22 @@ def load_config(config_path: Path | None = None) -> Config:
     vision_provider = (os.getenv("VISION_PROVIDER") or "none").strip().lower()
     if vision_provider in {"", "null"}:
         vision_provider = "none"
-    if vision_provider not in {"none", "anthropic"}:
-        raise ConfigError("VISION_PROVIDER: допустимые значения none, anthropic")
+    if vision_provider not in {"none", "deepseek", "anthropic"}:
+        raise ConfigError(
+            "VISION_PROVIDER: допустимые значения none, deepseek, anthropic"
+        )
     vision_base_url = (
         (os.getenv("VISION_BASE_URL") or "").strip()
-        or "https://opencode.ai/inference/go/anthropic/v1"
+        or "https://opencode.ai/inference/go/openai/v1"
     )
     parsed_vision = urlparse(vision_base_url)
     if parsed_vision.scheme not in {"http", "https"} or not parsed_vision.netloc:
         raise ConfigError("VISION_BASE_URL должен быть полным http(s)-адресом")
     vision_api_key = (
-        (os.getenv("VISION_API_KEY") or "").strip()
-        or llm_api_key
+        (os.getenv("VISION_API_KEY") or "").strip() or llm_api_key
     )
     vision_model = (
-        (os.getenv("VISION_MODEL") or "").strip() or "claude-haiku-5-5"
+        (os.getenv("VISION_MODEL") or "").strip() or "deepseek-v4.1-flash"
     )
     vision_max_calls = _env_positive_int(
         os.getenv("VISION_MAX_CALLS_PER_DAY"),
@@ -361,6 +382,41 @@ def load_config(config_path: Path | None = None) -> Config:
     )
     vision_timeout = _env_positive_number(
         os.getenv("VISION_TIMEOUT"), "VISION_TIMEOUT", 60.0
+    )
+
+    vision_fallback_provider = (
+        (os.getenv("VISION_FALLBACK_PROVIDER") or "anthropic").strip().lower()
+    )
+    if vision_fallback_provider in {"", "null"}:
+        vision_fallback_provider = "none"
+    if vision_fallback_provider not in {"none", "deepseek", "anthropic"}:
+        raise ConfigError(
+            "VISION_FALLBACK_PROVIDER: допустимые значения none, deepseek, "
+            "anthropic"
+        )
+    vision_fallback_base_url = (
+        (os.getenv("VISION_FALLBACK_BASE_URL") or "").strip()
+        or "https://opencode.ai/inference/go/anthropic/v1"
+    )
+    parsed_vision_fallback = urlparse(vision_fallback_base_url)
+    if (
+        parsed_vision_fallback.scheme not in {"http", "https"}
+        or not parsed_vision_fallback.netloc
+    ):
+        raise ConfigError(
+            "VISION_FALLBACK_BASE_URL должен быть полным http(s)-адресом"
+        )
+    vision_fallback_api_key = (
+        (os.getenv("VISION_FALLBACK_API_KEY") or "").strip() or llm_api_key
+    )
+    vision_fallback_model = (
+        (os.getenv("VISION_FALLBACK_MODEL") or "").strip()
+        or "claude-haiku-5-5"
+    )
+    vision_min_confidence_fallback = _env_confidence(
+        os.getenv("VISION_MIN_CONFIDENCE_FALLBACK"),
+        "VISION_MIN_CONFIDENCE_FALLBACK",
+        0.5,
     )
 
     if not dry_run and token is None:
@@ -397,4 +453,9 @@ def load_config(config_path: Path | None = None) -> Config:
         vision_max_calls_per_day=vision_max_calls,
         vision_max_images=vision_max_images,
         vision_timeout=vision_timeout,
+        vision_fallback_provider=vision_fallback_provider,
+        vision_fallback_model=vision_fallback_model,
+        vision_fallback_base_url=vision_fallback_base_url,
+        vision_fallback_api_key=vision_fallback_api_key,
+        vision_min_confidence_fallback=vision_min_confidence_fallback,
     )

@@ -485,21 +485,30 @@ LLM_TIMEOUT=20
 
 AI не заменяет проверку клейма и веса: он может ошибаться, поэтому фото и вопрос продавцу всё равно важны. Автосообщений продавцам нет.
 
-### Фото-анализ Claude Haiku
+### Фото-анализ: DeepSeek + Claude fallback
 
-Vision смотрит 1–3 фотографии объявления и пытается прочитать вес на весах, клеймо/пробу, отличить серебро от посеребрения/бижутерии и заметить камни. Фото берутся из detail-страницы: сначала `images.gallery`, затем `images.listings`; на диск не сохраняются, передаются в API как base64.
+Vision смотрит 1–3 фотографии объявления и пытается прочитать вес на весах, клеймо/пробу, отличить серебро от посеребрения/бижутерии и заметить камни. Основная модель — **DeepSeek V4.1 Flash** (OpenAI-совместимый endpoint), fallback — **Claude Haiku 5.5** (Anthropic Messages API). Фото берутся из detail-страницы: сначала `images.gallery`, затем `images.listings`; на диск не сохраняются, передаются в API как base64.
 
 ```env
-VISION_PROVIDER=anthropic
-VISION_MODEL=claude-haiku-5-5
-VISION_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_PROVIDER=deepseek
+VISION_MODEL=deepseek-v4.1-flash
+VISION_BASE_URL=https://opencode.ai/inference/go/openai/v1
 VISION_API_KEY=oc_sk_...        # можно не задавать, тогда берётся LLM_API_KEY
+
+VISION_FALLBACK_PROVIDER=anthropic
+VISION_FALLBACK_MODEL=claude-haiku-5-5
+VISION_FALLBACK_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_FALLBACK_API_KEY=        # пусто — LLM_API_KEY
+VISION_MIN_CONFIDENCE_FALLBACK=0.5
+
 VISION_MAX_CALLS_PER_DAY=100
 VISION_MAX_IMAGES=3
 VISION_TIMEOUT=60
 ```
 
-По умолчанию `VISION_PROVIDER=none` — vision выключен. Модель работает через OpenCode Go (Claude Haiku 5.5, тариф Go; актуальную цену и лимиты проверяйте у провайдера). По данным провайдера, Claude хранит запросы/изображения до 30 дней; проект сам фото не хранит.
+По умолчанию `VISION_PROVIDER=none` — vision выключен. `VISION_PROVIDER`/`VISION_FALLBACK_PROVIDER` принимают `deepseek`, `anthropic`, `none`; при `VISION_FALLBACK_PROVIDER=none` fallback не используется. Обе модели работают через OpenCode Go (тариф Go; актуальные цену и лимиты проверяйте у провайдера). По данным провайдера, Claude хранит запросы/изображения до 30 дней; проект сам фото не хранит.
+
+Fallback включается, когда DeepSeek не ответил (ошибка, таймаут, 429/5xx после повтора, битый JSON) или вернул `confidence` ниже `VISION_MIN_CONFIDENCE_FALLBACK`. Если Claude тоже не дал вердикт, остаётся ответ DeepSeek (или ничего) — анализ не блокируется. Каждый вызов основной модели считается в дневном лимите; fallback идёт в тот же лимит и логируется как `vision: fallback ...` без ключей.
 
 Vision вызывается только для новых объявлений и только для кандидатов: `is_lead` / `below` / `suspicious`, AI `ask`/`look` или priority-запрос. Дневной лимит — `meta.vision_calls:YYYY-MM-DD`; вердикт кэшируется в `ad_vision`, повторно не запрашивается.
 
@@ -649,10 +658,15 @@ systemctl --user restart silverwatch
 | `LLM_MODEL` | нет | модель, по умолчанию `deepseek-chat` |
 | `LLM_MAX_CALLS_PER_DAY` | нет | дневной лимит вызовов, по умолчанию 200 |
 | `LLM_TIMEOUT` | нет | таймаут AI-запроса, секунды, по умолчанию 20 |
-| `VISION_PROVIDER` | нет | `none` (по умолчанию) или `anthropic` |
-| `VISION_MODEL` | нет | `claude-haiku-5-5` |
-| `VISION_BASE_URL` | нет | Anthropic-совместимый endpoint |
+| `VISION_PROVIDER` | нет | `none` (по умолчанию), `deepseek` или `anthropic` |
+| `VISION_MODEL` | нет | `deepseek-v4.1-flash` |
+| `VISION_BASE_URL` | нет | OpenAI-совместимый endpoint (по умолчанию OpenCode Go) |
 | `VISION_API_KEY` | нет | ключ vision; пусто — используется `LLM_API_KEY` |
+| `VISION_FALLBACK_PROVIDER` | нет | `deepseek`, `anthropic` (по умолчанию) или `none` |
+| `VISION_FALLBACK_MODEL` | нет | `claude-haiku-5-5` |
+| `VISION_FALLBACK_BASE_URL` | нет | Anthropic-совместимый endpoint |
+| `VISION_FALLBACK_API_KEY` | нет | ключ fallback; пусто — `LLM_API_KEY` |
+| `VISION_MIN_CONFIDENCE_FALLBACK` | нет | порог перехода на fallback, 0…1 (0.5) |
 | `VISION_MAX_CALLS_PER_DAY` | нет | дневной лимит vision, по умолчанию 100 |
 | `VISION_MAX_IMAGES` | нет | 1–3 фото на объявление |
 | `VISION_TIMEOUT` | нет | таймаут vision, секунды, по умолчанию 60 |

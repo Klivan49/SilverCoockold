@@ -51,6 +51,11 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VISION_MODEL", "")
     monkeypatch.setenv("VISION_BASE_URL", "")
     monkeypatch.setenv("VISION_API_KEY", "")
+    monkeypatch.setenv("VISION_FALLBACK_PROVIDER", "none")
+    monkeypatch.setenv("VISION_FALLBACK_MODEL", "")
+    monkeypatch.setenv("VISION_FALLBACK_BASE_URL", "")
+    monkeypatch.setenv("VISION_FALLBACK_API_KEY", "")
+    monkeypatch.setenv("VISION_MIN_CONFIDENCE_FALLBACK", "")
     monkeypatch.setenv("VISION_MAX_CALLS_PER_DAY", "")
     monkeypatch.setenv("VISION_MAX_IMAGES", "")
     monkeypatch.setenv("VISION_TIMEOUT", "")
@@ -228,41 +233,73 @@ def test_llm_validation(
 
 
 def test_vision_defaults(tmp_path: Path) -> None:
-    """Без VISION_* фото-анализ выключен."""
+    """Без VISION_* фото-анализ выключен, primary — DeepSeek."""
     config = load_config(write_config(tmp_path, base_limits()))
 
     assert config.vision_provider == "none"
-    assert config.vision_model == "claude-haiku-5-5"
-    assert config.vision_base_url == (
-        "https://opencode.ai/inference/go/anthropic/v1"
-    )
+    assert config.vision_model == "deepseek-v4.1-flash"
+    assert config.vision_base_url == "https://opencode.ai/inference/go/openai/v1"
     assert config.vision_api_key is None
     assert config.vision_max_calls_per_day == 100
     assert config.vision_max_images == 3
     assert config.vision_timeout == 60.0
+    assert config.vision_fallback_provider == "none"
+    assert config.vision_fallback_model == "claude-haiku-5-5"
+    assert config.vision_fallback_base_url == (
+        "https://opencode.ai/inference/go/anthropic/v1"
+    )
+    assert config.vision_fallback_api_key is None
+    assert config.vision_min_confidence_fallback == 0.5
 
 
 def test_vision_parsing_and_key_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Vision-настройки читаются, ключ может наследоваться от LLM."""
-    monkeypatch.setenv("VISION_PROVIDER", "anthropic")
-    monkeypatch.setenv("VISION_MODEL", "claude-test")
+    """Vision-настройки читаются, ключи могут наследоваться от LLM."""
+    monkeypatch.setenv("VISION_PROVIDER", "deepseek")
+    monkeypatch.setenv("VISION_MODEL", "deepseek-test")
     monkeypatch.setenv("VISION_BASE_URL", "https://vision.example/v1")
     monkeypatch.setenv("VISION_MAX_CALLS_PER_DAY", "10")
     monkeypatch.setenv("VISION_MAX_IMAGES", "2")
     monkeypatch.setenv("VISION_TIMEOUT", "30")
+    monkeypatch.setenv("VISION_FALLBACK_PROVIDER", "anthropic")
+    monkeypatch.setenv("VISION_FALLBACK_MODEL", "claude-test")
+    monkeypatch.setenv(
+        "VISION_FALLBACK_BASE_URL", "https://fallback.example/v1"
+    )
+    monkeypatch.setenv("VISION_MIN_CONFIDENCE_FALLBACK", "0.7")
     monkeypatch.setenv("LLM_API_KEY", "llm-key")
 
     config = load_config(write_config(tmp_path, base_limits()))
 
-    assert config.vision_provider == "anthropic"
-    assert config.vision_model == "claude-test"
+    assert config.vision_provider == "deepseek"
+    assert config.vision_model == "deepseek-test"
     assert config.vision_base_url == "https://vision.example/v1"
     assert config.vision_api_key == "llm-key"
     assert config.vision_max_calls_per_day == 10
     assert config.vision_max_images == 2
     assert config.vision_timeout == 30.0
+    assert config.vision_fallback_provider == "anthropic"
+    assert config.vision_fallback_model == "claude-test"
+    assert config.vision_fallback_base_url == "https://fallback.example/v1"
+    assert config.vision_fallback_api_key == "llm-key"
+    assert config.vision_min_confidence_fallback == 0.7
+
+
+def test_vision_explicit_keys_override_llm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Отдельные ключи vision/fallback важнее LLM_API_KEY."""
+    monkeypatch.setenv("VISION_PROVIDER", "deepseek")
+    monkeypatch.setenv("VISION_API_KEY", "vision-key")
+    monkeypatch.setenv("VISION_FALLBACK_PROVIDER", "anthropic")
+    monkeypatch.setenv("VISION_FALLBACK_API_KEY", "fallback-key")
+    monkeypatch.setenv("LLM_API_KEY", "llm-key")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.vision_api_key == "vision-key"
+    assert config.vision_fallback_api_key == "fallback-key"
 
 
 @pytest.mark.parametrize(
@@ -273,6 +310,10 @@ def test_vision_parsing_and_key_fallback(
         ("VISION_MAX_CALLS_PER_DAY", "0"),
         ("VISION_MAX_IMAGES", "0"),
         ("VISION_TIMEOUT", "-1"),
+        ("VISION_FALLBACK_PROVIDER", "unknown"),
+        ("VISION_FALLBACK_BASE_URL", "ftp://example/v1"),
+        ("VISION_MIN_CONFIDENCE_FALLBACK", "1.5"),
+        ("VISION_MIN_CONFIDENCE_FALLBACK", "abc"),
     ],
 )
 def test_vision_validation(

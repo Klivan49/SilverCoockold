@@ -43,24 +43,32 @@ images.listings = ["https://rms.kufar.by/v1/list_thumbs_2x/adim1/....jpg", ...]
 
 ## Vision-модель
 
-Выбрана **Claude Haiku 5.5** через OpenCode Go:
+Основная — **DeepSeek V4.1 Flash** (OpenAI-совместимый endpoint), fallback —
+**Claude Haiku 5.5** через OpenCode Go:
 
 ```
+POST https://opencode.ai/inference/go/openai/v1/chat/completions
+Authorization: Bearer <OpenCode Go key>
+x-opencode-session: ses_silverwatch_ai
+
 POST https://opencode.ai/inference/go/anthropic/v1/messages
 Authorization: Bearer <OpenCode Go key>
 anthropic-version: 2023-06-01
 x-opencode-session: ses_silverwatch_ai
 ```
 
-Модель принимает base64-изображения, хорошо читает весы и клейма. Тариф
-OpenCode Go (около $15/мес; актуальные цену и лимиты проверяйте у провайдера).
-По данным провайдера, Claude хранит запросы и изображения до 30 дней; проект
-фото на диск не сохраняет.
+Обе модели принимают base64-изображения. DeepSeek дешевле и закрывает
+большинство фото; Claude подключается, когда primary не ответил или вернул
+`confidence` ниже `VISION_MIN_CONFIDENCE_FALLBACK` (по умолчанию 0.5).
+Тариф OpenCode Go (около $15/мес; актуальные цену и лимиты проверяйте у
+провайдера). По данным провайдера, Claude хранит запросы и изображения до
+30 дней; проект фото на диск не сохраняет.
 
 Правило: vision вызывается только для новых объявлений, где текст не дал
 однозначного ответа (`is_lead`/`below`/`suspicious`, AI `ask`/`look`) или для
-priority-запроса, и не чаще `VISION_MAX_CALLS_PER_DAY`. Без ключа/провайдера —
-`NullVisionAnalyzer` и текстовый fallback.
+priority-запроса, и не чаще `VISION_MAX_CALLS_PER_DAY` (лимит общий для
+primary и fallback). Без ключа/провайдера — `NullVisionAnalyzer` и текстовый
+fallback.
 
 ## Vision-ответ (строгий JSON)
 
@@ -100,10 +108,15 @@ priority-запроса, и не чаще `VISION_MAX_CALLS_PER_DAY`. Без к�
 ## Конфиг (проект)
 
 ```env
-VISION_PROVIDER=none|anthropic
-VISION_MODEL=claude-haiku-5-5
-VISION_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_PROVIDER=deepseek|anthropic|none
+VISION_MODEL=deepseek-v4.1-flash
+VISION_BASE_URL=https://opencode.ai/inference/go/openai/v1
 VISION_API_KEY=oc_sk_...       # пусто — используется LLM_API_KEY
+VISION_FALLBACK_PROVIDER=anthropic|none
+VISION_FALLBACK_MODEL=claude-haiku-5-5
+VISION_FALLBACK_BASE_URL=https://opencode.ai/inference/go/anthropic/v1
+VISION_FALLBACK_API_KEY=       # пусто — LLM_API_KEY
+VISION_MIN_CONFIDENCE_FALLBACK=0.5
 VISION_MAX_CALLS_PER_DAY=100
 VISION_MAX_IMAGES=3
 VISION_TIMEOUT=60
@@ -116,7 +129,8 @@ VISION_TIMEOUT=60
 
 1. Документация (этот файл, SECURITY, AGENTS, ARCHITECTURE, FILTERING).
 2. `app/images.py`: URL из detail, скачивание, base64, лимит 5 МБ.
-3. `app/analyzers/vision.py`: Claude Haiku adapter, JSON-валидация, retry/fallback.
+3. `app/analyzers/vision.py`: DeepSeek + Claude адаптеры, общий JSON-парсер,
+   retry/fallback.
 4. Интеграция в scheduler: vision только для новых кандидатов, кэш `ad_vision`,
    дневной лимит `vision_calls:YYYY-MM-DD`.
 5. Фильтр: instant/digest/skip; ask — в очередь дайджеста.

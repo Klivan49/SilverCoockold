@@ -13,7 +13,7 @@ regex-анализ (вес, проба, цена/грамм, лом, лид)
    ↓
 AI текст (OpenCode Go / DeepSeek V4.1 Flash)
    ↓
-AI фото (Claude Haiku 5.5 через OpenCode Go)
+AI фото (DeepSeek V4.1 Flash + fallback Claude Haiku 5.5)
    ↓
 решение: skip / digest / instant
    ↓
@@ -32,8 +32,8 @@ Telegram (текст + кнопка скана)
 | `app/scrap.py` | цены лома по пробам, `data/scrap_prices.json`, hallmark |
 | `app/analyzers/base.py` | `AiVerdict`, `Analyzer` Protocol |
 | `app/analyzers/deepseek.py` | OpenAI-compatible chat/completions, JSON, retries |
-| `app/analyzers/vision.py` | Claude Haiku 5.5 (Anthropic Messages API), JSON, retry/fallback |
-| `app/analyzers/factory.py` | выбор текстового (`none/deepseek/openai`) и vision (`none/anthropic`) |
+| `app/analyzers/vision.py` | DeepSeek V4.1 Flash (chat/completions) + Claude Haiku 5.5 (Messages API), общий JSON-парсер, retry, fallback |
+| `app/analyzers/factory.py` | выбор текстового (`none/deepseek/openai`) и vision (`none/deepseek/anthropic`, fallback-обёртка) |
 | `app/scheduler.py` | per-query циклы, bootstrap/catchup, AI, фильтр, watchdog |
 | `app/notifier.py` | Telegram HTML, префиксы, inline-кнопка, dry-run |
 | `app/telegram_control.py` | long polling, `/start`, `/scan`, `/status`, кулдаун |
@@ -88,7 +88,10 @@ Telegram (текст + кнопка скана)
 
 - detail `images.gallery`/`listings` — публичные URL;
 - 1–3 изображения, base64, лимит 5 МБ, на диск не сохраняются;
-- модель Claude Haiku 5.5 через OpenCode Go, endpoint `/anthropic/v1/messages`;
+- модель DeepSeek V4.1 Flash через OpenCode Go, endpoint `/openai/v1/chat/completions`
+  (`image_url` с data URI); fallback — Claude Haiku 5.5, `/anthropic/v1/messages`
+  (base64-блоки), при `None` или `confidence < 0.5`;
+- общий разбор ответа/JSON и валидация для обеих моделей;
 - vision JSON: `is_silver`, `item_type`, `weight_g`, `purity`, `hallmark`,
   `scale_visible`, `stones_or_costume`, `confidence`, `notes`, `question`;
 - vision только для новых кандидатов (`ask`/look/lead/below/suspicious/priority),
