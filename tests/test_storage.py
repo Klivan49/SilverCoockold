@@ -388,6 +388,51 @@ def test_pending_alerts_queue_roundtrip(storage: Storage) -> None:
     assert storage.take_pending(10) == []
 
 
+def test_pending_sorted_by_confidence_then_price(
+    storage: Storage,
+) -> None:
+    """Очередь: AI confidence desc, затем price_per_gram asc, с лимитом."""
+    specs = [("a", 0.7, 5.0), ("b", 0.9, 8.0), ("c", 0.7, 2.0)]
+    for ad_id, confidence, ppg in specs:
+        storage.save(make_ad(ad_id), "q")
+        storage.queue_alert(ad_id, "q", "ask")
+        storage.save_analysis(
+            ad_id,
+            SilverAnalysis(
+                weight_g=10.0,
+                purity=925,
+                effective_purity=925,
+                price_byn=ppg * 10,
+                price_per_gram=ppg,
+                scrap_price=None,
+                is_below_scrap=False,
+                per_gram_pricing=False,
+                note="",
+            ),
+        )
+        storage.save_ai_verdict(
+            ad_id,
+            AiVerdict(
+                is_silver=True,
+                category="украшение",
+                verdict="ask",
+                reason="",
+                question="",
+                weight_g=None,
+                purity=None,
+                confidence=confidence,
+                model="fake",
+            ),
+        )
+
+    assert [item["ad_id"] for item in storage.take_pending(10)] == [
+        "b",
+        "c",
+        "a",
+    ]
+    assert [item["ad_id"] for item in storage.take_pending(2)] == ["b", "c"]
+
+
 def test_analysis_columns_migration(tmp_path: Path) -> None:
     """Старая таблица ad_analysis получает колонки is_suspicious/is_lead."""
     db_path = tmp_path / "old.db"

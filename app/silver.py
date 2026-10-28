@@ -71,6 +71,7 @@ class SilverAnalysis:
     is_suspicious: bool = False
     is_silver: bool = True
     is_lead: bool = False
+    is_strong_lead: bool = False
 
 
 def _to_float(raw: str) -> float | None:
@@ -194,12 +195,39 @@ def _extract_body_price(text: str) -> float | None:
     return value if value is not None and value > 0 else None
 
 
+def compute_strong_lead(
+    weight_g: float | None,
+    price_per_gram: float | None,
+    prices: ScrapPrices,
+    *,
+    is_silver: bool,
+    is_suspicious: bool,
+    ratio: float = 0.6,
+) -> bool:
+    """Сильный лид: цена за грамм заметно ниже лома 800-й пробы.
+
+    «Ниже лома» тоже может быть сильным по цене; при отправке приоритет у
+    префикса «НИЖЕ ЛОМА».
+    """
+    if not is_silver or is_suspicious:
+        return False
+    rate800 = scrap_rate(prices, 800)
+    return bool(
+        weight_g is not None
+        and weight_g > 0
+        and price_per_gram is not None
+        and rate800 is not None
+        and price_per_gram < rate800 * ratio
+    )
+
+
 def analyze_ad(
     ad: Ad,
     body: str,
     prices: ScrapPrices,
     lead_max_price_byn: float = 100.0,
     lead_negotiable: bool = True,
+    strong_lead_ratio: float = 0.6,
 ) -> SilverAnalysis:
     """Разобрать объявление и посчитать, дешевле ли оно лома."""
     text = f"{ad.subject}\n{body or ''}".strip()
@@ -299,6 +327,14 @@ def analyze_ad(
         and not is_below
         and not suspicious
     )
+    strong_lead = compute_strong_lead(
+        weight,
+        price_per_gram,
+        prices,
+        is_silver=True,
+        is_suspicious=suspicious,
+        ratio=strong_lead_ratio,
+    )
 
     return SilverAnalysis(
         weight_g=weight,
@@ -313,4 +349,5 @@ def analyze_ad(
         is_suspicious=suspicious,
         is_silver=True,
         is_lead=is_lead,
+        is_strong_lead=strong_lead,
     )

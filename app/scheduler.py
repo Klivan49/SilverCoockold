@@ -30,7 +30,7 @@ from app.scrap import (
     load_scrap_prices,
     scrap_rate,
 )
-from app.silver import SilverAnalysis, analyze_ad
+from app.silver import SilverAnalysis, analyze_ad, compute_strong_lead
 from app.sleep import SleepInhibitor
 from app.status import DEFAULT_STATUS_PATH, write_status
 from app.storage import Storage, utc_now_iso
@@ -396,6 +396,7 @@ class Scheduler:
         if vision.notes:
             notes = f"{notes}; vision: {vision.notes}" if notes else vision.notes
 
+        is_silver = analysis.is_silver or vision.is_silver
         return replace(
             analysis,
             weight_g=weight,
@@ -405,8 +406,16 @@ class Scheduler:
             scrap_price=scrap,
             is_below_scrap=below,
             is_suspicious=suspicious,
-            is_silver=analysis.is_silver or vision.is_silver,
+            is_silver=is_silver,
             is_lead=analysis.is_lead and (weight is None or purity is None),
+            is_strong_lead=compute_strong_lead(
+                weight,
+                ppg,
+                prices,
+                is_silver=is_silver,
+                is_suspicious=suspicious,
+                ratio=self.config.limits.strong_lead_ratio,
+            ),
             note=notes,
         )
 
@@ -503,6 +512,7 @@ class Scheduler:
                 prices,
                 lead_max_price_byn=self.config.limits.lead_max_price_byn,
                 lead_negotiable=self.config.limits.lead_negotiable,
+                strong_lead_ratio=self.config.limits.strong_lead_ratio,
             )
         except Exception:
             logger.exception("silver: не удалось разобрать ad_id=%s", ad.ad_id)
@@ -593,7 +603,11 @@ class Scheduler:
                 ai.unprofitable_prob if ai is not None else 0.0,
                 vision.unprofitable_prob if vision is not None else 0.0,
             )
-            if unprofitable_prob > self.config.ai_max_unprofitable_prob:
+            ai_is_ask = ai is not None and ai.verdict == "ask"
+            if (
+                not ai_is_ask
+                and unprofitable_prob > self.config.ai_max_unprofitable_prob
+            ):
                 self.storage.mark_instant_alerted(ad.ad_id)
                 logger.info(
                     "AI: unprofitable_prob=%.2f > %.2f — skip ad_id=%s",
@@ -608,6 +622,8 @@ class Scheduler:
             if analysis is not None and (
                 analysis.is_below_scrap or analysis.is_suspicious
             ):
+                instant = True
+            elif analysis is not None and analysis.is_strong_lead:
                 instant = True
             elif ai is not None and ai.verdict == "look":
                 instant = True
@@ -632,6 +648,19 @@ class Scheduler:
                 queue_reason = "ask"
 
             if queue_reason is not None:
+                if (
+                    queue_reason == "ask"
+                    and ai is not None
+                    and ai.confidence < self.config.ai_min_confidence_digest
+                ):
+                    self.storage.mark_instant_alerted(ad.ad_id)
+                    logger.info(
+                        "AI: ask confidence=%.2f < %.2f — skip ad_id=%s",
+                        ai.confidence,
+                        self.config.ai_min_confidence_digest,
+                        ad.ad_id,
+                    )
+                    continue
                 self.storage.queue_alert(ad.ad_id, query.q, queue_reason)
                 self.storage.mark_instant_alerted(ad.ad_id)
                 logger.info(
@@ -660,10 +689,12 @@ class Scheduler:
                 error=None if ok else "не удалось отправить",
             )
             sent += 1
-            if ai is not None:
-                reason = f"AI {ai.verdict}"
-            elif analysis is not None and analysis.is_below_scrap:
+            if analysis is not None and analysis.is_below_scrap:
                 reason = "ниже лома"
+            elif analysis is not None and analysis.is_strong_lead:
+                reason = "сильный лид"
+            elif ai is not None:
+                reason = f"AI {ai.verdict}"
             elif analysis is not None and analysis.is_suspicious:
                 reason = "подозрительно дешево"
             elif analysis is not None and analysis.is_lead:

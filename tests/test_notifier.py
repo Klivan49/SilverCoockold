@@ -112,6 +112,27 @@ def test_below_scrap_prefix() -> None:
     assert "⚖️ 14,4 г · 925" in text
 
 
+def test_strong_lead_prefix() -> None:
+    """Сильный лид получает префикс 💸."""
+    text = format_ad_message(
+        make_ad(), "серебро лом", make_analysis(is_strong_lead=True)
+    )
+
+    assert text.startswith("💸 СИЛЬНЫЙ ЛИД\n")
+
+
+def test_below_prefix_wins_over_strong_lead() -> None:
+    """Ниже лома важнее сильного лида."""
+    text = format_ad_message(
+        make_ad(price_byn=1000),
+        "серебро лом",
+        make_analysis(is_below_scrap=True, is_strong_lead=True),
+    )
+
+    assert text.startswith("💰 НИЖЕ ЛОМА\n")
+    assert "СИЛЬНЫЙ ЛИД" not in text
+
+
 def test_lead_prefix_and_question() -> None:
     """Лид получает жёлтый префикс и вопрос продавцу."""
     analysis = make_analysis(

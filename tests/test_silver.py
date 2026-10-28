@@ -276,3 +276,43 @@ def test_lead_not_for_below_or_suspicious() -> None:
     assert below.is_lead is False
     assert suspicious.is_suspicious is True
     assert suspicious.is_lead is False
+
+
+def test_strong_lead_chain_15g_20byn() -> None:
+    """15 г за 20 BYN (1,33 BYN/г) без пробы — сильный лид, не below."""
+    analysis = analyze("общий вес 15 г", price_byn=2000)
+
+    assert analysis.is_strong_lead is True
+    assert analysis.is_below_scrap is False
+    assert analysis.is_silver is True
+
+
+def test_strong_lead_ratio_and_gate() -> None:
+    """Порог 0.6 от лома 800 и запрет для suspicious/без веса."""
+    edge = analyze("общий вес 15 г", price_byn=4500)
+    assert edge.price_per_gram == pytest.approx(3.0)
+    assert edge.is_strong_lead is False
+
+    relaxed = analyze(
+        "общий вес 15 г",
+        price_byn=4500,
+        strong_lead_ratio=0.7,
+    )
+    assert relaxed.is_strong_lead is True
+
+    below = analyze("925 проба, вес 10 г, клеймо", 1000)
+    suspicious = analyze("925 проба, вес 100 г", 1000)
+    no_weight = analyze("925 проба", price_byn=2000)
+
+    assert below.is_below_scrap is True and below.is_strong_lead is True
+    assert suspicious.is_suspicious is True
+    assert suspicious.is_strong_lead is False
+    assert no_weight.is_strong_lead is False
+
+
+def test_strong_lead_false_for_non_silver() -> None:
+    """Не серебро — не сильный лид."""
+    analysis = analyze("серебряного цвета штаны", price_byn=100)
+
+    assert analysis.is_silver is False
+    assert analysis.is_strong_lead is False

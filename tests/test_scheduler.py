@@ -184,6 +184,7 @@ def ai_verdict(
     is_silver: bool = True,
     verdict: str = "look",
     unprofitable_prob: float = 0.0,
+    confidence: float = 0.9,
 ) -> AiVerdict:
     """Собрать AI-вердикт для тестов."""
     return AiVerdict(
@@ -194,7 +195,7 @@ def ai_verdict(
         question="Есть ли клеймо?",
         weight_g=None,
         purity=None,
-        confidence=0.9,
+        confidence=confidence,
         model="fake",
         unprofitable_prob=unprofitable_prob,
     )
@@ -219,6 +220,8 @@ def make_config(
     digest_interval: int = 120,
     digest_max_items: int = 20,
     vision_max_calls: int = 100,
+    strong_lead_ratio: float = 0.6,
+    ai_min_confidence_digest: float = 0.6,
 ) -> Config:
     """Собрать конфиг для тестов без чтения файлов и env."""
     return Config(
@@ -230,6 +233,7 @@ def make_config(
             require_ai_for_leads=require_ai_for_leads,
             lead_digest_interval_min=digest_interval,
             lead_digest_max_items=digest_max_items,
+            strong_lead_ratio=strong_lead_ratio,
         ),
         telegram_token=None,
         telegram_chat_id=None,
@@ -241,6 +245,7 @@ def make_config(
         llm_max_calls_per_day=llm_max_calls,
         vision_provider="none",
         vision_max_calls_per_day=vision_max_calls,
+        ai_min_confidence_digest=ai_min_confidence_digest,
     )
 
 
@@ -1335,7 +1340,7 @@ def test_vision_unprofitable_prob_overrides_low_text(
 def test_below_scrap_with_high_prob_is_skipped(
     tmp_path: Path,
 ) -> None:
-    """Правило 40% сильнее «ниже лома»: такой лот не отправляется."""
+    """look + prob>0.4 сильнее «ниже лома»: такой лот не отправляется."""
     query = make_query(notify=False)
     storage = Storage(tmp_path / "test.db")
     storage.set_bootstrapped(query.q)
@@ -1343,7 +1348,7 @@ def test_below_scrap_with_high_prob_is_skipped(
     kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
     notifier = FakeNotifier()
     analyzer = FakeAnalyzer(
-        ai_verdict(verdict="ask", unprofitable_prob=0.5)
+        ai_verdict(verdict="look", unprofitable_prob=0.5)
     )
     scheduler = make_scheduler(
         make_config([query]), storage, kufar, notifier, analyzer=analyzer
@@ -1378,6 +1383,85 @@ def test_no_ai_fallback_ignores_prob_rule(tmp_path: Path) -> None:
 
     assert result.sent == 1
     assert len(notifier.ad_calls) == 1
+
+
+def test_strong_lead_is_instant_even_with_ai_ask(
+    tmp_path: Path,
+) -> None:
+    """15 г за 20 BYN и AI ask: сильный лид уходит instant, не в дайджест."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1091933353", price_byn=2000, subject="Цепочка серебряная")
+    kufar = FakeKufar(
+        {query.q: [ad]},
+        details={ad.url: "общий вес 15 г"},
+    )
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(ai_verdict(verdict="ask"))
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    analysis = notifier.analyses[0]
+    assert isinstance(analysis, SilverAnalysis)
+    assert analysis.is_strong_lead is True
+    assert analysis.is_below_scrap is False
+    assert storage.count_pending() == 0
+    assert storage.is_instant_alerted(ad.ad_id) is True
+
+
+def test_ask_with_high_unprofitable_prob_goes_to_digest(
+    tmp_path: Path,
+) -> None:
+    """ask + prob 0.75 не скипается порогом 40%, а идёт в дайджест."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1091935651", price_byn=20000, subject="Цепочка и крестик")
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(
+        ai_verdict(verdict="ask", unprofitable_prob=0.75)
+    )
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 1
+    pending = storage.take_pending(10)
+    assert pending[0]["ad_id"] == ad.ad_id
+    assert pending[0]["reason"] == "ask"
+
+
+def test_low_confidence_ask_is_skipped_from_digest(
+    tmp_path: Path,
+) -> None:
+    """ask с confidence ниже 0.6 в дайджест не попадает."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("low", price_byn=20000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(ai_verdict(verdict="ask", confidence=0.4))
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert storage.count_pending() == 0
+    assert storage.is_instant_alerted(ad.ad_id) is True
 
 
 def test_interval_jitter_bounds() -> None:

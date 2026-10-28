@@ -122,8 +122,8 @@ VISION_MAX_IMAGES=3
 VISION_TIMEOUT=60
 ```
 
-`lead_digest_interval_min` и `lead_digest_max_items` задаются в
-`config.yaml` (120 и 20), а не в `.env`.
+`lead_digest_interval_min`, `lead_digest_max_items` и `strong_lead_ratio`
+задаются в `config.yaml` (30, 10 и 0.6), а не в `.env`.
 
 ## Этапы
 

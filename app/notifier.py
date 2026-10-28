@@ -128,6 +128,8 @@ def format_ad_message(
     text = "\n".join(lines)
     if analysis is not None and analysis.is_below_scrap:
         text = "💰 НИЖЕ ЛОМА\n" + text
+    elif analysis is not None and analysis.is_strong_lead:
+        text = "💸 СИЛЬНЫЙ ЛИД\n" + text
     elif ai is not None and ai.verdict == "ask":
         text = "❓ УТОЧНИТЬ\n" + text
     elif ai is not None and ai.verdict == "look":

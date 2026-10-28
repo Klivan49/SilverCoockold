@@ -454,31 +454,43 @@ LLM_TIMEOUT=20
 - `is_silver=false` само по себе не блокирует: `skip` пропускается, `ask` уходит в дайджест;
 - ответ кэшируется в `ad_ai`, повторно модель не вызывается;
 - дневной лимит считается в `meta.llm_calls:YYYY-MM-DD`;
-- если `unprofitable_prob > AI_MAX_UNPROFITABLE_PROB` (по умолчанию 0.4) — лот не отправляется ни instant, ни в дайджест и помечается `instant_alerted=1`;
+- сильный по цене лид (`is_strong_lead`) — instant с `💸 СИЛЬНЫЙ ЛИД`, даже если AI сказал `ask`;
+- если `unprofitable_prob > AI_MAX_UNPROFITABLE_PROB` (0.4) и вердикт не `ask` (`look`/`skip`) — лот не отправляется ни instant, ни в дайджест и помечается `instant_alerted=1`;
+- `ask` порогом 40% не режется: уходит в дайджест (если confidence ≥ `AI_MIN_CONFIDENCE_DIGEST`);
 - нет ключа, таймаут, ошибка HTTP, битый JSON или превышен лимит — fallback на обычную regex-логику.
+
+### Сильные лиды
+
+`analyze_ad` помечает `is_strong_lead`, если есть вес и цена за грамм ниже `strong_lead_ratio` (0.6) от цены лома 800-й пробы. Например, цепочка 15 г за 20 BYN (1,33 BYN/г при ломе 5,0 BYN/г) — сильный лид.
+
+- сильный лид уходит instant даже при AI `ask`, в дайджест не ставится;
+- при отправке префикс `💸 СИЛЬНЫЙ ЛИД`; если лот ещё и ниже лома, приоритет у `💰 НИЖЕ ЛОМА`;
+- подозрительные и не-серебро сильными не считаются;
+- порог задаётся в `config.yaml`: `limits.strong_lead_ratio: 0.6`.
 
 ### Порог невыгодности 40%
 
 Текстовая модель и vision возвращают в JSON поле `unprofitable_prob` — вероятность (0…1), что покупать лот по этой цене невыгодно. Учитываются цена за грамм против лома, отсутствие веса/пробы/клейма, посеребрение/бижутерия, камни и недрагоценные детали, состояние, комплектность, доставка/пересылка и риск подделки. `0` — явно выгодно, `1` — явно невыгодно; это не `confidence`.
 
-Планировщик берёт `max(ai.unprofitable_prob, vision.unprofitable_prob)`. Если вероятность строго больше `AI_MAX_UNPROFITABLE_PROB`:
+Планировщик берёт `max(ai.unprofitable_prob, vision.unprofitable_prob)`. Если вероятность строго больше `AI_MAX_UNPROFITABLE_PROB` и вердикт не `ask`:
 
 - instant не отправляется;
 - в дайджест лот не ставится;
 - объявление помечается `instant_alerted=1`, чтобы не проверять его повторно;
 - в лог пишется `AI: unprofitable_prob=0.55 > 0.40 — skip ad_id=...`.
 
-Правило действует и для «ниже лома», подозрительных, `look` и `ask` — по требованию «слать не надо». Если AI/vision не ответил (None, ошибка, лимит), правило не применяется и работает обычный fallback. Старые кэши `ad_ai`/`ad_vision` без поля читаются как `0.0`.
+Правило действует и для «ниже лома», подозрительных и `look`. `ask` не режется: цепочка+крестик 200 BYN без веса с `unprofitable_prob=0.75` и confidence 0.9 попадает в дайджест, а не пропадает. Если AI/vision не ответил (None, ошибка, лимит), правило не применяется и работает обычный fallback. Старые кэши `ad_ai`/`ad_vision` без поля читаются как `0.0`.
 
 ```env
 AI_MAX_UNPROFITABLE_PROB=0.4
+AI_MIN_CONFIDENCE_DIGEST=0.6
 ```
 
 ### Дайджест ask-лидов
 
-Очередь `pending_alerts(ad_id PK, query, reason, queued_at, sent_at)` накапливает лиды, которые не должны идти instant. При постановке объявление сразу помечается `instant_alerted=1`, поэтому повторно не попадает ни в instant, ни в очередь. Причина в очереди — `ask` или `лид`.
+Очередь `pending_alerts(ad_id PK, query, reason, queued_at, sent_at)` накапливает лиды, которые не должны идти instant. При постановке объявление сразу помечается `instant_alerted=1`, поэтому повторно не попадает ни в instant, ни в очередь. Причина в очереди — `ask` или `лид`. `ask` с `confidence < AI_MIN_CONFIDENCE_DIGEST` (0.6) в дайджест не ставится.
 
-Раз в 60 секунд проверяется, истёк ли `limits.lead_digest_interval_min` (по умолчанию 120 минут). Если есть pending:
+Раз в 60 секунд проверяется, истёк ли `limits.lead_digest_interval_min` (по умолчанию 30 минут). Если есть pending:
 
 ```
 🗂 Дайджест лидов (2)
@@ -494,7 +506,8 @@ AI_MAX_UNPROFITABLE_PROB=0.4
    https://www.kufar.by/item/...
 ```
 
-- до `limits.lead_digest_max_items` (по умолчанию 20) объявлений за раз;
+- до `limits.lead_digest_max_items` (по умолчанию 10) объявлений за раз;
+- сортировка: сначала высокий AI `confidence`, затем меньший `price_per_gram`; сильные лиды сюда не попадают — они instant;
 - остаток остаётся на следующий дайджест;
 - заголовок, цена, причина, вопрос и URL HTML-экранируются и обрезаются;
 - ошибка отправки не помечает элементы — повтор при следующей проверке;
@@ -630,8 +643,9 @@ limits:
   lead_max_price_byn: 100
   lead_negotiable: true
   require_ai_for_leads: true
-  lead_digest_interval_min: 120
-  lead_digest_max_items: 20
+  lead_digest_interval_min: 30
+  lead_digest_max_items: 10
+  strong_lead_ratio: 0.6
 ```
 
 | Поле | Смысл |
@@ -648,8 +662,9 @@ limits:
 | `lead_max_price_byn` | максимальная цена лида, BYN (по умолчанию 100) |
 | `lead_negotiable` | слать лиды с договорной ценой и известной пробой |
 | `require_ai_for_leads` | без AI обычные лиды пропускаются (fallback) |
-| `lead_digest_interval_min` | интервал дайджеста ask-лидов, минуты (120) |
-| `lead_digest_max_items` | максимум лидов в одном дайджесте (20) |
+| `lead_digest_interval_min` | интервал дайджеста ask-лидов, минуты (30) |
+| `lead_digest_max_items` | максимум лидов в одном дайджесте (10) |
+| `strong_lead_ratio` | доля от лома 800 для сильного лида (0.6) |
 
 После изменения `config.yaml` перезапусти демон:
 
@@ -677,6 +692,7 @@ systemctl --user restart silverwatch
 | `LLM_MAX_CALLS_PER_DAY` | нет | дневной лимит вызовов, по умолчанию 200 |
 | `LLM_TIMEOUT` | нет | таймаут AI-запроса, секунды, по умолчанию 20 |
 | `AI_MAX_UNPROFITABLE_PROB` | нет | порог невыгодности 0…1, по умолчанию 0.4 |
+| `AI_MIN_CONFIDENCE_DIGEST` | нет | минимум confidence для ask в дайджесте, по умолчанию 0.6 |
 | `VISION_PROVIDER` | нет | `none` (по умолчанию), `deepseek` или `anthropic` |
 | `VISION_MODEL` | нет | `deepseek-v4.1-flash` |
 | `VISION_BASE_URL` | нет | OpenAI-совместимый endpoint (по умолчанию OpenCode Go) |

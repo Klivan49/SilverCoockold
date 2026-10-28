@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -411,7 +412,7 @@ class Storage:
             )
 
     def take_pending(self, limit: int) -> list[dict[str, object]]:
-        """Взять до limit неотправленных лидов вместе с данными объявления."""
+        """Взять до limit неотправленных лидов: confidence desc, цена/г asc."""
         if limit <= 0:
             return []
         with self._connection() as connection:
@@ -421,10 +422,31 @@ class Storage:
                 "FROM pending_alerts p "
                 "LEFT JOIN ads a ON a.ad_id = p.ad_id "
                 "WHERE p.sent_at IS NULL "
-                "ORDER BY p.queued_at LIMIT ?",
-                (limit,),
+                "ORDER BY p.queued_at",
             ).fetchall()
-        return [dict(row) for row in rows]
+        items = [dict(row) for row in rows]
+        if not items:
+            return []
+
+        for item in items:
+            ad_id = str(item.get("ad_id") or "")
+            ai = self.get_ai_verdict(ad_id)
+            analysis = self.get_analysis(ad_id)
+            item["_ai_confidence"] = ai.confidence if ai is not None else -1.0
+            item["_price_per_gram"] = (
+                analysis.price_per_gram
+                if analysis is not None
+                and analysis.price_per_gram is not None
+                else math.inf
+            )
+        items.sort(
+            key=lambda item: (
+                -float(item["_ai_confidence"]),  # type: ignore[arg-type]
+                float(item["_price_per_gram"]),  # type: ignore[arg-type]
+                str(item.get("queued_at") or ""),
+            )
+        )
+        return items[:limit]
 
     def mark_digest_sent(self, ad_ids: list[str]) -> None:
         """Пометить включённые в дайджест объявления отправленными."""

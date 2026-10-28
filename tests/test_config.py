@@ -48,6 +48,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_MAX_CALLS_PER_DAY", "")
     monkeypatch.setenv("LLM_TIMEOUT", "")
     monkeypatch.setenv("AI_MAX_UNPROFITABLE_PROB", "")
+    monkeypatch.setenv("AI_MIN_CONFIDENCE_DIGEST", "")
     monkeypatch.setenv("VISION_PROVIDER", "none")
     monkeypatch.setenv("VISION_MODEL", "")
     monkeypatch.setenv("VISION_BASE_URL", "")
@@ -145,16 +146,19 @@ def test_lead_limits_defaults_and_parsing(tmp_path: Path) -> None:
 def test_lead_digest_limits(tmp_path: Path) -> None:
     """Настройки дайджеста читаются и валидируются."""
     default_config = load_config(write_config(tmp_path, base_limits()))
-    assert default_config.limits.lead_digest_interval_min == 120
-    assert default_config.limits.lead_digest_max_items == 20
+    assert default_config.limits.lead_digest_interval_min == 30
+    assert default_config.limits.lead_digest_max_items == 10
+    assert default_config.limits.strong_lead_ratio == 0.6
 
     limits = base_limits() | {
         "lead_digest_interval_min": 60,
         "lead_digest_max_items": 5,
+        "strong_lead_ratio": 0.5,
     }
     config = load_config(write_config(tmp_path, limits))
     assert config.limits.lead_digest_interval_min == 60
     assert config.limits.lead_digest_max_items == 5
+    assert config.limits.strong_lead_ratio == 0.5
 
     with pytest.raises(ConfigError):
         load_config(
@@ -163,6 +167,15 @@ def test_lead_digest_limits(tmp_path: Path) -> None:
                 base_limits() | {"lead_digest_interval_min": 0},
             )
         )
+
+    for bad_ratio in (0, 1.5, "0.6"):
+        with pytest.raises(ConfigError):
+            load_config(
+                write_config(
+                    tmp_path,
+                    base_limits() | {"strong_lead_ratio": bad_ratio},
+                )
+            )
 
 
 @pytest.mark.parametrize(
@@ -190,17 +203,20 @@ def test_llm_defaults(tmp_path: Path) -> None:
     assert config.llm_max_calls_per_day == 200
     assert config.llm_timeout == 20.0
     assert config.ai_max_unprofitable_prob == 0.4
+    assert config.ai_min_confidence_digest == 0.6
 
 
 def test_unprofitable_prob_threshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Порог невыгодности читается из env."""
+    """Пороги невыгодности и уверенности дайджеста читаются из env."""
     monkeypatch.setenv("AI_MAX_UNPROFITABLE_PROB", "0.7")
+    monkeypatch.setenv("AI_MIN_CONFIDENCE_DIGEST", "0.8")
 
     config = load_config(write_config(tmp_path, base_limits()))
 
     assert config.ai_max_unprofitable_prob == 0.7
+    assert config.ai_min_confidence_digest == 0.8
 
 
 def test_llm_parsing(
@@ -233,6 +249,7 @@ def test_llm_parsing(
         ("LLM_TIMEOUT", "-1"),
         ("AI_MAX_UNPROFITABLE_PROB", "1.5"),
         ("AI_MAX_UNPROFITABLE_PROB", "abc"),
+        ("AI_MIN_CONFIDENCE_DIGEST", "1.5"),
     ],
 )
 def test_llm_validation(

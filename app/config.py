@@ -46,8 +46,9 @@ class LimitsConfig:
     lead_max_price_byn: float = 100.0
     lead_negotiable: bool = True
     require_ai_for_leads: bool = True
-    lead_digest_interval_min: int = 120
-    lead_digest_max_items: int = 20
+    lead_digest_interval_min: int = 30
+    lead_digest_max_items: int = 10
+    strong_lead_ratio: float = 0.6
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class Config:
     llm_max_calls_per_day: int = 200
     llm_timeout: float = 20.0
     ai_max_unprofitable_prob: float = 0.4
+    ai_min_confidence_digest: float = 0.6
     vision_provider: str = "none"
     vision_model: str = "deepseek-v4.1-flash"
     vision_base_url: str = "https://opencode.ai/inference/go/openai/v1"
@@ -121,6 +123,19 @@ def _non_negative_number(value: Any, name: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
         raise ConfigError(
             f"config.yaml: {name} должен быть неотрицательным числом"
+        )
+    return float(value)
+
+
+def _fraction(value: Any, name: str) -> float:
+    """Проверить, что значение — доля в диапазоне (0, 1]."""
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not (0 < value <= 1)
+    ):
+        raise ConfigError(
+            f"config.yaml: {name} должен быть числом в диапазоне 0..1"
         )
     return float(value)
 
@@ -192,12 +207,16 @@ def _parse_limits(raw: Any) -> LimitsConfig:
         lead_negotiable=lead_negotiable,
         require_ai_for_leads=require_ai_for_leads,
         lead_digest_interval_min=_positive_int(
-            data.get("lead_digest_interval_min", 120),
+            data.get("lead_digest_interval_min", 30),
             "limits.lead_digest_interval_min",
         ),
         lead_digest_max_items=_positive_int(
-            data.get("lead_digest_max_items", 20),
+            data.get("lead_digest_max_items", 10),
             "limits.lead_digest_max_items",
+        ),
+        strong_lead_ratio=_fraction(
+            data.get("strong_lead_ratio", 0.6),
+            "limits.strong_lead_ratio",
         ),
     )
 
@@ -357,6 +376,11 @@ def load_config(config_path: Path | None = None) -> Config:
         "AI_MAX_UNPROFITABLE_PROB",
         0.4,
     )
+    ai_min_confidence_digest = _env_confidence(
+        os.getenv("AI_MIN_CONFIDENCE_DIGEST"),
+        "AI_MIN_CONFIDENCE_DIGEST",
+        0.6,
+    )
 
     vision_provider = (os.getenv("VISION_PROVIDER") or "none").strip().lower()
     if vision_provider in {"", "null"}:
@@ -453,6 +477,7 @@ def load_config(config_path: Path | None = None) -> Config:
         llm_max_calls_per_day=llm_max_calls,
         llm_timeout=llm_timeout,
         ai_max_unprofitable_prob=ai_max_unprofitable_prob,
+        ai_min_confidence_digest=ai_min_confidence_digest,
         vision_provider=vision_provider,
         vision_model=vision_model,
         vision_base_url=vision_base_url,
