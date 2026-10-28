@@ -589,6 +589,20 @@ class Scheduler:
                 analysis = self._merge_vision_analysis(analysis, vision, prices)
                 self.storage.save_analysis(ad.ad_id, analysis)
 
+            unprofitable_prob = max(
+                ai.unprofitable_prob if ai is not None else 0.0,
+                vision.unprofitable_prob if vision is not None else 0.0,
+            )
+            if unprofitable_prob > self.config.ai_max_unprofitable_prob:
+                self.storage.mark_instant_alerted(ad.ad_id)
+                logger.info(
+                    "AI: unprofitable_prob=%.2f > %.2f — skip ad_id=%s",
+                    unprofitable_prob,
+                    self.config.ai_max_unprofitable_prob,
+                    ad.ad_id,
+                )
+                continue
+
             instant = False
             queue_reason: str | None = None
             if analysis is not None and (

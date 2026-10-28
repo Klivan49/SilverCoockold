@@ -161,6 +161,7 @@ def vision_verdict(
     confidence: float = 0.9,
     notes: str = "Фото проверено",
     question: str = "Подтвердите вес",
+    unprofitable_prob: float = 0.0,
 ) -> VisionVerdict:
     """Собрать vision-вердикт для тестов."""
     return VisionVerdict(
@@ -175,11 +176,14 @@ def vision_verdict(
         notes=notes,
         question=question,
         model="fake-vision",
+        unprofitable_prob=unprofitable_prob,
     )
 
 
 def ai_verdict(
-    is_silver: bool = True, verdict: str = "look"
+    is_silver: bool = True,
+    verdict: str = "look",
+    unprofitable_prob: float = 0.0,
 ) -> AiVerdict:
     """Собрать AI-вердикт для тестов."""
     return AiVerdict(
@@ -192,6 +196,7 @@ def ai_verdict(
         purity=None,
         confidence=0.9,
         model="fake",
+        unprofitable_prob=unprofitable_prob,
     )
 
 
@@ -1251,6 +1256,128 @@ def test_vision_none_falls_back(
     assert result.sent == 1
     assert len(notifier.ad_calls) == 1
     assert notifier.vision_calls == [None]
+
+
+def test_unprofitable_prob_skips_instant_and_digest(
+    tmp_path: Path,
+) -> None:
+    """prob>0.4: ни instant, ни дайджест; объявление помечено alerted."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(ai_verdict(unprofitable_prob=0.5))
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 0
+    assert storage.is_instant_alerted(ad.ad_id) is True
+
+
+def test_unprofitable_prob_below_limit_sends(tmp_path: Path) -> None:
+    """prob<=0.4 — поведение как раньше."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(ai_verdict(unprofitable_prob=0.39))
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert storage.is_instant_alerted(ad.ad_id) is True
+
+
+def test_vision_unprofitable_prob_overrides_low_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """vision prob=0.6 skip, даже если текст дал 0.1."""
+    stub_vision_download(monkeypatch)
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    add_detail_image(kufar, ad)
+    vision = FakeVisionAnalyzer(vision_verdict(unprofitable_prob=0.6))
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(ai_verdict(unprofitable_prob=0.1))
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        analyzer=analyzer,
+        vision_analyzer=vision,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert vision.calls == 1
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 0
+
+
+def test_below_scrap_with_high_prob_is_skipped(
+    tmp_path: Path,
+) -> None:
+    """Правило 40% сильнее «ниже лома»: такой лот не отправляется."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=1000)
+    kufar = FakeKufar({query.q: [ad]}, details={ad.url: SCRAP_BODY})
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer(
+        ai_verdict(verdict="ask", unprofitable_prob=0.5)
+    )
+    scheduler = make_scheduler(
+        make_config([query]), storage, kufar, notifier, analyzer=analyzer
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 0
+    assert storage.is_instant_alerted(ad.ad_id) is True
+
+
+def test_no_ai_fallback_ignores_prob_rule(tmp_path: Path) -> None:
+    """Без AI/vision правило не применяется, priority отправляется."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=10000, subject="серебро")
+    kufar = FakeKufar({query.q: [ad]})
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        kufar,
+        notifier,
+        analyzer=FakeAnalyzer(None),
+        vision_analyzer=FakeVisionAnalyzer(None),
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
 
 
 def test_interval_jitter_bounds() -> None:

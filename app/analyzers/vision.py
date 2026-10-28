@@ -41,6 +41,11 @@ VISION_PROMPT = """Ты анализируешь фотографии объяв
   "scale_visible": true|false,
   "stones_or_costume": true|false,
   "confidence": число от 0 до 1,
+  "unprofitable_prob": число 0..1 — вероятность, что покупать этот лот по этой
+    цене невыгодно. Учитывай цену за грамм против лома, отсутствие веса/пробы/
+    клейма, посеребрение/бижутерию, камни и недрагоценные детали, состояние,
+    комплектность, доставку/пересылку и риск подделки. 0 — явно выгодно,
+    1 — явно невыгодно. Это не confidence (уверенность в классификации).
   "notes": "1-2 фразы по-русски",
   "question": "что уточнить у продавца"
 }
@@ -91,6 +96,7 @@ class VisionVerdict:
     notes: str
     question: str
     model: str
+    unprofitable_prob: float = 0.0
 
 
 def extract_response_text(payload: Any) -> str:
@@ -167,6 +173,13 @@ def parse_vision_verdict(content: Any, model: str) -> VisionVerdict | None:
     except (TypeError, ValueError):
         confidence = 0.0
 
+    try:
+        unprofitable_prob = min(
+            1.0, max(0.0, float(data.get("unprofitable_prob", 0)))
+        )
+    except (TypeError, ValueError):
+        unprofitable_prob = 0.0
+
     notes = data.get("notes")
     question = data.get("question")
     return VisionVerdict(
@@ -181,6 +194,7 @@ def parse_vision_verdict(content: Any, model: str) -> VisionVerdict | None:
         notes=notes.strip() if isinstance(notes, str) else "",
         question=question.strip() if isinstance(question, str) else "",
         model=model,
+        unprofitable_prob=unprofitable_prob,
     )
 
 

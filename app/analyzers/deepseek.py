@@ -51,7 +51,13 @@ verdict=look, если данных достаточно и лот стоит в
   "question": "что спросить у продавца, если данных мало, иначе пустая строка",
   "weight_g": число или null,
   "purity": целое число или null,
-  "confidence": число от 0 до 1
+  "confidence": число от 0 до 1,
+  "unprofitable_prob": число 0..1 — вероятность, что покупать этот лот по
+    этой цене невыгодно. Учитывай цену за грамм против лома, отсутствие
+    веса/пробы/клейма, посеребрение/бижутерию, камни и недрагоценные детали,
+    состояние, комплектность, доставку/пересылку и риск подделки. 0 — явно
+    выгодно, 1 — явно невыгодно. Это не confidence (уверенность в
+    классификации).
 }
 """
 
@@ -227,6 +233,12 @@ class DeepSeekAnalyzer:
         except (TypeError, ValueError):
             confidence = 0.0
 
+        prob_raw = data.get("unprofitable_prob", 0)
+        try:
+            unprofitable_prob = min(1.0, max(0.0, float(prob_raw)))
+        except (TypeError, ValueError):
+            unprofitable_prob = 0.0
+
         reason = data.get("reason")
         question = data.get("question")
         return AiVerdict(
@@ -239,6 +251,7 @@ class DeepSeekAnalyzer:
             purity=purity,
             confidence=confidence,
             model=self.model,
+            unprofitable_prob=unprofitable_prob,
         )
 
     @staticmethod

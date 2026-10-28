@@ -212,6 +212,7 @@ def test_vision_verdict_roundtrip(storage: Storage) -> None:
         notes="Видно клеймо",
         question="Вес?",
         model="claude-haiku-5-5",
+        unprofitable_prob=0.6,
     )
     assert storage.get_vision_verdict("1") is None
     storage.save_vision_verdict("1", verdict)
@@ -221,6 +222,7 @@ def test_vision_verdict_roundtrip(storage: Storage) -> None:
     assert loaded.purity == 925
     assert loaded.hallmark == "зубр"
     assert loaded.notes == "Видно клеймо"
+    assert loaded.unprofitable_prob == pytest.approx(0.6)
 
 
 def test_ad_analysis_roundtrip(storage: Storage) -> None:
@@ -290,6 +292,7 @@ def test_ai_verdict_roundtrip(storage: Storage) -> None:
         purity=925,
         confidence=0.8,
         model="deepseek-chat",
+        unprofitable_prob=0.55,
     )
 
     assert storage.get_ai_verdict("1") is None
@@ -304,6 +307,63 @@ def test_ai_verdict_roundtrip(storage: Storage) -> None:
     assert loaded.purity == 925
     assert loaded.confidence == pytest.approx(0.8)
     assert loaded.model == "deepseek-chat"
+    assert loaded.unprofitable_prob == pytest.approx(0.55)
+
+
+def test_old_caches_without_probability_read_zero(
+    storage: Storage, db_path: Path
+) -> None:
+    """Старые ad_ai/ad_vision без unprofitable_prob дают 0.0."""
+    ai_json = json.dumps(
+        {
+            "is_silver": True,
+            "category": "украшение",
+            "verdict": "look",
+            "reason": "old",
+            "question": "",
+            "weight_g": None,
+            "purity": None,
+            "confidence": 0.8,
+            "model": "old",
+        },
+        ensure_ascii=False,
+    )
+    vision_json = json.dumps(
+        {
+            "is_silver": True,
+            "item_type": "украшение",
+            "weight_g": None,
+            "purity": None,
+            "hallmark": "не видно",
+            "scale_visible": False,
+            "stones_or_costume": False,
+            "confidence": 0.8,
+            "notes": "old",
+            "question": "",
+            "model": "old",
+        },
+        ensure_ascii=False,
+    )
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO ad_ai (ad_id, verdict_json, created_at) "
+            "VALUES ('ai', ?, '2026-01-01T00:00:00+00:00')",
+            (ai_json,),
+        )
+        connection.execute(
+            "INSERT INTO ad_vision (ad_id, verdict_json, created_at) "
+            "VALUES ('vision', ?, '2026-01-01T00:00:00+00:00')",
+            (vision_json,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    ai = storage.get_ai_verdict("ai")
+    vision = storage.get_vision_verdict("vision")
+    assert ai is not None and ai.unprofitable_prob == 0.0
+    assert vision is not None and vision.unprofitable_prob == 0.0
 
 
 def test_pending_alerts_queue_roundtrip(storage: Storage) -> None:

@@ -72,6 +72,7 @@ class Config:
     llm_session_id: str = "ses_silverwatch_ai"
     llm_max_calls_per_day: int = 200
     llm_timeout: float = 20.0
+    ai_max_unprofitable_prob: float = 0.4
     vision_provider: str = "none"
     vision_model: str = "deepseek-v4.1-flash"
     vision_base_url: str = "https://opencode.ai/inference/go/openai/v1"
@@ -351,6 +352,11 @@ def load_config(config_path: Path | None = None) -> Config:
     llm_timeout = _env_positive_number(
         os.getenv("LLM_TIMEOUT"), "LLM_TIMEOUT", 20.0
     )
+    ai_max_unprofitable_prob = _env_confidence(
+        os.getenv("AI_MAX_UNPROFITABLE_PROB"),
+        "AI_MAX_UNPROFITABLE_PROB",
+        0.4,
+    )
 
     vision_provider = (os.getenv("VISION_PROVIDER") or "none").strip().lower()
     if vision_provider in {"", "null"}:
@@ -446,6 +452,7 @@ def load_config(config_path: Path | None = None) -> Config:
         llm_session_id=llm_session_id,
         llm_max_calls_per_day=llm_max_calls,
         llm_timeout=llm_timeout,
+        ai_max_unprofitable_prob=ai_max_unprofitable_prob,
         vision_provider=vision_provider,
         vision_model=vision_model,
         vision_base_url=vision_base_url,

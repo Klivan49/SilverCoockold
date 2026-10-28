@@ -135,6 +135,48 @@ def test_vision_extracts_json_from_markdown_and_clamps() -> None:
     assert verdict.confidence == 1.0
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0.55, 0.55), (2.0, 1.0), (-1.0, 0.0), ("0.4", 0.4), ("abc", 0.0)],
+)
+def test_vision_unprofitable_prob_parsed_and_clamped(
+    value: object, expected: float
+) -> None:
+    """vision unprofitable_prob читается и зажимается в 0..1."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return response_with(vision_content(unprofitable_prob=value))
+
+    analyzer, client = make_analyzer(handler)
+    try:
+        verdict = asyncio.run(analyzer.analyze(make_ad(), "", IMAGE))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert verdict is not None
+    assert verdict.unprofitable_prob == pytest.approx(expected)
+    prompt = seen["payload"]["messages"][0]["content"][0]["text"]
+    assert "unprofitable_prob" in prompt
+
+
+def test_vision_missing_prob_defaults_zero() -> None:
+    """Без поля unprofitable_prob — 0.0."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response_with(vision_content())
+
+    analyzer, client = make_analyzer(handler)
+    try:
+        verdict = asyncio.run(analyzer.analyze(make_ad(), "", IMAGE))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert verdict is not None
+    assert verdict.unprofitable_prob == 0.0
+
+
 def test_vision_broken_json_returns_none() -> None:
     """Битый JSON → None."""
 

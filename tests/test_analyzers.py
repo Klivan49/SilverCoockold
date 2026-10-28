@@ -88,11 +88,46 @@ def test_analyze_parses_verdict_and_payload() -> None:
     assert verdict.purity == 925
     assert verdict.reason.startswith("Похоже")
     assert verdict.model == "deepseek-chat"
+    assert verdict.unprofitable_prob == 0.0
     assert seen["url"] == "https://llm.example/v1/chat/completions"
     assert seen["auth"] == "Bearer secret-key"
     payload = seen["payload"]
     assert payload["response_format"] == {"type": "json_object"}
     assert "925 проба" in payload["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0.55, 0.55), (2.0, 1.0), (-1.0, 0.0), ("0.3", 0.3), ("abc", 0.0)],
+)
+def test_unprofitable_prob_parsed_and_clamped(
+    value: object, expected: float
+) -> None:
+    """unprofitable_prob читается и зажимается в 0..1."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": content(unprofitable_prob=value)}}
+                ]
+            },
+        )
+
+    ad, body, analysis, prices = context()
+    analyzer, client = make_analyzer(handler)
+    try:
+        verdict = asyncio.run(analyzer.analyze(ad, body, analysis, prices))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert verdict is not None
+    assert verdict.unprofitable_prob == pytest.approx(expected)
+    system_prompt = seen["payload"]["messages"][0]["content"]
+    assert "unprofitable_prob" in system_prompt
 
 
 def test_json_is_extracted_from_text() -> None:

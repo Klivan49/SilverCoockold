@@ -47,6 +47,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_MODEL", "")
     monkeypatch.setenv("LLM_MAX_CALLS_PER_DAY", "")
     monkeypatch.setenv("LLM_TIMEOUT", "")
+    monkeypatch.setenv("AI_MAX_UNPROFITABLE_PROB", "")
     monkeypatch.setenv("VISION_PROVIDER", "none")
     monkeypatch.setenv("VISION_MODEL", "")
     monkeypatch.setenv("VISION_BASE_URL", "")
@@ -188,6 +189,18 @@ def test_llm_defaults(tmp_path: Path) -> None:
     assert config.llm_model == "deepseek-chat"
     assert config.llm_max_calls_per_day == 200
     assert config.llm_timeout == 20.0
+    assert config.ai_max_unprofitable_prob == 0.4
+
+
+def test_unprofitable_prob_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Порог невыгодности читается из env."""
+    monkeypatch.setenv("AI_MAX_UNPROFITABLE_PROB", "0.7")
+
+    config = load_config(write_config(tmp_path, base_limits()))
+
+    assert config.ai_max_unprofitable_prob == 0.7
 
 
 def test_llm_parsing(
@@ -218,6 +231,8 @@ def test_llm_parsing(
         ("LLM_BASE_URL", "ftp://example/v1"),
         ("LLM_MAX_CALLS_PER_DAY", "0"),
         ("LLM_TIMEOUT", "-1"),
+        ("AI_MAX_UNPROFITABLE_PROB", "1.5"),
+        ("AI_MAX_UNPROFITABLE_PROB", "abc"),
     ],
 )
 def test_llm_validation(

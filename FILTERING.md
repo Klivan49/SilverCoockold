@@ -41,10 +41,31 @@ instant / digest / skip.
 
 - AI `skip`;
 - AI `is_silver=false` + `skip` (одежда, цвет, бижутерия, посеребрение);
+- `unprofitable_prob > AI_MAX_UNPROFITABLE_PROB` (0.4) у текстового AI или
+  vision — не instant и не дайджест, `instant_alerted=1`; правило действует
+  и для below/suspicious/look/ask;
 - regex «не серебро» (латунь, мельхиор, ALPACCA, штаны/куртки/цвет);
 - нет цены/веса/пробы и цена выше `lead_max_price_byn` (для обычных запросов);
 - bootstrap/catchup;
 - дубли (`ad_id` уже alerted).
+
+## Невыгодность (unprofitable_prob)
+
+Текстовая модель и vision возвращают `unprofitable_prob` (0…1): вероятность,
+что покупать лот по этой цене невыгодно. Учитываются цена/грамм против лома,
+нет веса/пробы/клейма, посеребрение/бижутерия, камни/недрагоценные детали,
+состояние, комплектность, доставка/пересылка, риск подделки. `0` — явно
+выгодно, `1` — явно невыгодно; это не `confidence`.
+
+Планировщик берёт `max(ai, vision)`. Если `> AI_MAX_UNPROFITABLE_PROB`
+(по умолчанию 0.4):
+
+- не отправлять instant и не ставить в `pending_alerts`;
+- пометить `instant_alerted=1`;
+- лог `AI: unprofitable_prob=0.55 > 0.40 — skip ad_id=...`.
+
+Нет AI/vision (None, ошибка, лимит) — правило не применяется, обычный fallback.
+Старые кэши без поля дают `0.0`.
 
 ## Fallback без AI
 
@@ -88,7 +109,8 @@ limits:
 ```
 
 AI-настройки — в `.env` (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`,
-`LLM_MAX_CALLS_PER_DAY`, `LLM_TIMEOUT`). Vision (`VISION_*`) — следующий шаг.
+`LLM_MAX_CALLS_PER_DAY`, `LLM_TIMEOUT`, `AI_MAX_UNPROFITABLE_PROB`).
+Vision (`VISION_*`) — DeepSeek primary + Claude fallback.
 
 ## Реализация
 

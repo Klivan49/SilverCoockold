@@ -23,6 +23,7 @@ class AiVerdict:
     purity: int | None
     confidence: float
     model: str = ""
+    unprofitable_prob: float = 0.0
 
 
 class Analyzer(Protocol):

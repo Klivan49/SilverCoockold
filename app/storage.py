@@ -20,6 +20,14 @@ from app.analyzers.vision import VisionVerdict
 from app.models import Ad
 from app.silver import SilverAnalysis
 
+
+def _prob(value: object) -> float:
+    """Привести вероятность к диапазону 0..1; битое значение — 0."""
+    try:
+        return min(1.0, max(0.0, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ads (
   ad_id TEXT PRIMARY KEY,
@@ -371,6 +379,7 @@ class Storage:
                 purity=payload.get("purity"),
                 confidence=float(payload.get("confidence", 0)),
                 model=str(payload.get("model", "")),
+                unprofitable_prob=_prob(payload.get("unprofitable_prob", 0)),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -465,6 +474,7 @@ class Storage:
                 notes=str(payload.get("notes", "")),
                 question=str(payload.get("question", "")),
                 model=str(payload.get("model", "")),
+                unprofitable_prob=_prob(payload.get("unprofitable_prob", 0)),
             )
         except (KeyError, TypeError, ValueError):
             return None
