@@ -277,6 +277,28 @@ def test_ai_verdict_roundtrip(storage: Storage) -> None:
     assert loaded.model == "deepseek-chat"
 
 
+def test_pending_alerts_queue_roundtrip(storage: Storage) -> None:
+    """Очередь дайджеста: dedupe, выборка, отметка отправки."""
+    ad = make_ad("1", subject="Браслет серебряный")
+    storage.save(ad, "серебро")
+
+    storage.queue_alert(ad.ad_id, "серебро", "ask")
+    storage.queue_alert(ad.ad_id, "серебро", "ask")
+    assert storage.count_pending() == 1
+
+    items = storage.take_pending(10)
+    assert len(items) == 1
+    assert items[0]["ad_id"] == ad.ad_id
+    assert items[0]["reason"] == "ask"
+    assert items[0]["subject"] == "Браслет серебряный"
+    assert items[0]["price_byn"] == ad.price_byn
+    assert items[0]["url"] == ad.url
+
+    storage.mark_digest_sent([ad.ad_id])
+    assert storage.count_pending() == 0
+    assert storage.take_pending(10) == []
+
+
 def test_analysis_columns_migration(tmp_path: Path) -> None:
     """Старая таблица ad_analysis получает колонки is_suspicious/is_lead."""
     db_path = tmp_path / "old.db"

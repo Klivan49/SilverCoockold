@@ -25,3 +25,5 @@ limits:
   lead_max_price_byn: 100
   lead_negotiable: true
   require_ai_for_leads: true
+  lead_digest_interval_min: 120
+  lead_digest_max_items: 20

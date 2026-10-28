@@ -46,6 +46,8 @@ class LimitsConfig:
     lead_max_price_byn: float = 100.0
     lead_negotiable: bool = True
     require_ai_for_leads: bool = True
+    lead_digest_interval_min: int = 120
+    lead_digest_max_items: int = 20
 
 
 @dataclass(frozen=True)
@@ -174,6 +176,14 @@ def _parse_limits(raw: Any) -> LimitsConfig:
         ),
         lead_negotiable=lead_negotiable,
         require_ai_for_leads=require_ai_for_leads,
+        lead_digest_interval_min=_positive_int(
+            data.get("lead_digest_interval_min", 120),
+            "limits.lead_digest_interval_min",
+        ),
+        lead_digest_max_items=_positive_int(
+            data.get("lead_digest_max_items", 20),
+            "limits.lead_digest_max_items",
+        ),
     )
 
 

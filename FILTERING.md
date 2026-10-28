@@ -20,21 +20,22 @@ instant / digest / skip.
 
 - `is_below_scrap` — цена лота ниже лома;
 - `is_suspicious` — подозрительно низкая цена/грамм;
-- AI `look` с `confidence >= AI_MIN_CONFIDENCE_LOOK` (0.8);
+- AI `look` — сразу (порог confidence пока не применяется);
 - приоритетный запрос (`notify=true`) и AI `is_silver=true`,
   `verdict != skip`;
-- vision нашёл вес/пробу, и цена ниже/около лома.
+- vision нашёл вес/пробу, и цена ниже/около лома (план).
 
-### Digest (1–2 раза в день)
+### Digest (очередь `pending_alerts`)
 
-- AI `ask` (все, кроме явно сильных);
-- лид без AI (ключ истёк/ошибка);
-- `is_lead` с ценой выше `lead_max_price_byn`;
-- низкая уверенность AI;
-- лиды из обычных запросов, если их больше N за проход.
+- AI `ask` из обычных запросов;
+- AI `ask` из priority, если `is_silver=false`;
+- лид без AI, если `require_ai_for_leads=false`;
+- остальные лиды, которые не проходят в instant.
 
-Дайджест: до 20 ссылок, заголовок, цена, причина/вопрос, без отдельных
-сообщений. Цель — 10–20 сообщений в день вместо ~95.
+Дайджест: до `lead_digest_max_items` (20) ссылок, заголовок, цена,
+причина/вопрос и URL, без отдельных сообщений. Проверка раз в 60 секунд,
+интервал — `lead_digest_interval_min` (120). Остаток остаётся на следующий
+дайджест. Цель — 10–20 сообщений в день вместо ~95.
 
 ### Skip
 
@@ -50,9 +51,10 @@ instant / digest / skip.
 Если `LLM_PROVIDER=none` или ключ истёк (`401 api_key_expired`):
 
 - **не отправлять** обычные `is_lead` instant;
+- при `require_ai_for_leads=true` обычные лиды пропускаются;
+- при `false` обычные лиды ставятся в очередь дайджеста с reason `лид`;
 - отправлять только `below`/`suspicious` и приоритетные запросы;
-- `ask`/лиды — в дайджест или skip;
-- в лог/`/status` писать «AI недоступен, fallback».
+- в лог писать «AI недоступен, fallback».
 
 Это сразу убирает большую часть мусора при проблемах с ключом.
 
@@ -76,15 +78,17 @@ Vision может:
 
 ## Конфиг
 
-```env
-AI_MIN_CONFIDENCE_LOOK=0.8
-AI_MIN_CONFIDENCE_ASK=0.9
-LEAD_DIGEST_INTERVAL_MIN=720
-LEAD_DIGEST_MAX_ITEMS=20
-REQUIRE_AI_FOR_LEADS=true
-VISION_MAX_CALLS_PER_DAY=100
-VISION_MAX_IMAGES=3
+Фактические настройки (config.yaml):
+
+```yaml
+limits:
+  lead_digest_interval_min: 120
+  lead_digest_max_items: 20
+  require_ai_for_leads: true
 ```
+
+AI-настройки — в `.env` (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`,
+`LLM_MAX_CALLS_PER_DAY`, `LLM_TIMEOUT`). Vision (`VISION_*`) — следующий шаг.
 
 ## Реализация
 
@@ -92,9 +96,11 @@ VISION_MAX_IMAGES=3
    дайджеста.
 2. Scheduler: решение `instant/digest/skip`; для digest — INSERT и
    `instant_alerted=1` (чтобы не дублировать).
-3. Задача `digest_loop` раз в `LEAD_DIGEST_INTERVAL_MIN`: выбрать до N,
-   отправить одним сообщением, пометить `sent_at`.
-4. `REQUIRE_AI_FOR_LEADS=true`: при `ai is None` и `is_lead` — digest/skip.
+3. Задача `digest_loop` проверяет очередь раз в 60 секунд; если истёк
+   `lead_digest_interval_min`, выбирает до `lead_digest_max_items`, отправляет
+   одним сообщением и помечает `sent_at`. Ошибка отправки не помечает.
+4. `require_ai_for_leads=true`: при `ai is None` и `is_lead` — skip; при
+   `false` — очередь с reason `лид`.
 5. Тесты: instant/digest/skip; fallback без ключа; дедуп; лимит; фото-промоушен.
 
 ## Метрики приёмки

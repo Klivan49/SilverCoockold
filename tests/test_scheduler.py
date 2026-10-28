@@ -22,6 +22,7 @@ from app.scheduler import (
     KUFAR_ERROR_QUERY,
     KUFAR_RECOVERY_TEXT,
     LAST_KUFAR_NOTICE_KEY,
+    LEAD_DIGEST_LAST_KEY,
     STALE_ALERT_PREFIX,
     Scheduler,
     interval_with_jitter,
@@ -74,6 +75,7 @@ class FakeNotifier:
         self.analyses: list[object] = []
         self.ai_calls: list[object] = []
         self.texts: list[str] = []
+        self.text_result = True
         self.closed = False
 
     async def send_ad(
@@ -90,7 +92,7 @@ class FakeNotifier:
 
     async def send_text(self, text: str) -> bool:
         self.texts.append(text)
-        return True
+        return self.text_result
 
     async def close(self) -> None:
         self.closed = True
@@ -154,6 +156,8 @@ def make_config(
     catchup_hours: float = 12,
     llm_max_calls: int = 200,
     require_ai_for_leads: bool = True,
+    digest_interval: int = 120,
+    digest_max_items: int = 20,
 ) -> Config:
     """Собрать конфиг для тестов без чтения файлов и env."""
     return Config(
@@ -163,6 +167,8 @@ def make_config(
             catchup_max_age_hours=catchup_hours,
             request_timeout=20,
             require_ai_for_leads=require_ai_for_leads,
+            lead_digest_interval_min=digest_interval,
+            lead_digest_max_items=digest_max_items,
         ),
         telegram_token=None,
         telegram_chat_id=None,
@@ -533,8 +539,8 @@ def test_below_scrap_sent_without_notify(tmp_path: Path) -> None:
     assert saved is not None and saved.is_below_scrap is True
 
 
-def test_lead_sent_without_notify(tmp_path: Path) -> None:
-    """Лид без веса/пробы отправляется при notify=false."""
+def test_lead_without_notify_is_queued(tmp_path: Path) -> None:
+    """Лид без AI при notify=false уходит в очередь, а не instant."""
     query = make_query(notify=False)
     storage = Storage(tmp_path / "test.db")
     storage.set_bootstrapped(query.q)
@@ -554,12 +560,12 @@ def test_lead_sent_without_notify(tmp_path: Path) -> None:
 
     result = asyncio.run(scheduler.run_pass(query))
 
-    assert result.sent == 1
-    assert len(notifier.ad_calls) == 1
-    analysis = notifier.analyses[0]
-    assert isinstance(analysis, SilverAnalysis)
-    assert analysis.is_lead is True
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 1
     assert storage.is_instant_alerted(ad.ad_id) is True
+    pending = storage.take_pending(10)
+    assert pending[0]["reason"] == "лид"
 
 
 def test_lead_without_ai_is_skipped_by_default(tmp_path: Path) -> None:
@@ -779,6 +785,168 @@ def test_ai_none_falls_back_to_regex(tmp_path: Path) -> None:
     assert result.sent == 1
     assert analyzer.calls == 1
     assert notifier.ai_calls == [None]
+
+
+def test_ask_from_ordinary_is_queued_not_sent(tmp_path: Path) -> None:
+    """AI ask из обычного запроса уходит в pending без instant."""
+    query = make_query(notify=False)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=100000, subject="серебро")
+    analyzer = FakeAnalyzer(ai_verdict(verdict="ask"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert notifier.ad_calls == []
+    assert storage.count_pending() == 1
+    assert storage.is_instant_alerted(ad.ad_id) is True
+    assert storage.take_pending(10)[0]["reason"] == "ask"
+
+
+def test_ask_from_priority_with_silver_is_instant(tmp_path: Path) -> None:
+    """AI ask из priority с is_silver=true отправляется сразу."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=100000, subject="серебро")
+    analyzer = FakeAnalyzer(ai_verdict(is_silver=True, verdict="ask"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 1
+    assert len(notifier.ad_calls) == 1
+    assert storage.count_pending() == 0
+
+
+def test_ask_from_priority_without_silver_is_queued(tmp_path: Path) -> None:
+    """AI ask из priority без подтверждения серебра идёт в дайджест."""
+    query = make_query(notify=True)
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped(query.q)
+    ad = make_ad("1", price_byn=100000, subject="серебро")
+    analyzer = FakeAnalyzer(ai_verdict(is_silver=False, verdict="ask"))
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([query]),
+        storage,
+        FakeKufar({query.q: [ad]}),
+        notifier,
+        analyzer=analyzer,
+    )
+
+    result = asyncio.run(scheduler.run_pass(query))
+
+    assert result.sent == 0
+    assert storage.count_pending() == 1
+
+
+def _queue_digest_item(storage: Storage, ad: Ad, reason: str = "ask") -> None:
+    """Подготовить объявление в pending."""
+    storage.save(ad, "серебро")
+    storage.queue_alert(ad.ad_id, "серебро", reason)
+
+
+def _set_digest_due(storage: Storage) -> None:
+    """Сделать интервал дайджеста истёкшим."""
+    old = (datetime.now(timezone.utc) - timedelta(minutes=121)).isoformat()
+    storage.set_meta(LEAD_DIGEST_LAST_KEY, old)
+
+
+def test_digest_sends_pending_and_marks(tmp_path: Path) -> None:
+    """Два pending → одно сообщение, оба помечены sent."""
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped("серебро")
+    _queue_digest_item(storage, make_ad("1", subject="Браслет серебряный"))
+    _queue_digest_item(storage, make_ad("2", subject="Цепочка серебро"))
+    _set_digest_due(storage)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([make_query()]), storage, FakeKufar({}), notifier
+    )
+
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is True
+    assert len(notifier.texts) == 1
+    assert "Дайджест лидов (2)" in notifier.texts[0]
+    assert "Браслет серебряный" in notifier.texts[0]
+    assert storage.count_pending() == 0
+
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is False
+    assert len(notifier.texts) == 1
+
+
+def test_digest_max_items_keeps_remainder(tmp_path: Path) -> None:
+    """max_items ограничивает дайджест, остаток остаётся."""
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped("серебро")
+    _queue_digest_item(storage, make_ad("1", subject="Первый"))
+    _queue_digest_item(storage, make_ad("2", subject="Второй"))
+    _set_digest_due(storage)
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([make_query()], digest_max_items=1),
+        storage,
+        FakeKufar({}),
+        notifier,
+    )
+
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is True
+    assert storage.count_pending() == 1
+
+    _set_digest_due(storage)
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is True
+    assert storage.count_pending() == 0
+    assert len(notifier.texts) == 2
+
+
+def test_digest_send_error_does_not_mark(tmp_path: Path) -> None:
+    """Ошибка send_text оставляет pending для повтора."""
+    storage = Storage(tmp_path / "test.db")
+    storage.set_bootstrapped("серебро")
+    _queue_digest_item(storage, make_ad("1", subject="Серебро"))
+    _set_digest_due(storage)
+    notifier = FakeNotifier()
+    notifier.text_result = False
+    scheduler = make_scheduler(
+        make_config([make_query()]), storage, FakeKufar({}), notifier
+    )
+
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is False
+    assert storage.count_pending() == 1
+    assert storage.get_meta(LEAD_DIGEST_LAST_KEY) is not None  # old due marker
+
+    notifier.text_result = True
+    _set_digest_due(storage)
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is True
+    assert storage.count_pending() == 0
+
+
+def test_empty_digest_sends_nothing(tmp_path: Path) -> None:
+    """Нет pending — нет сообщения."""
+    storage = Storage(tmp_path / "test.db")
+    notifier = FakeNotifier()
+    scheduler = make_scheduler(
+        make_config([make_query()]), storage, FakeKufar({}), notifier
+    )
+
+    assert asyncio.run(scheduler.send_lead_digest_if_due()) is False
+    assert notifier.texts == []
 
 
 def test_ai_daily_limit(tmp_path: Path) -> None:

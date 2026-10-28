@@ -129,6 +129,29 @@ def test_lead_limits_defaults_and_parsing(tmp_path: Path) -> None:
     assert config.limits.lead_negotiable is False
 
 
+def test_lead_digest_limits(tmp_path: Path) -> None:
+    """Настройки дайджеста читаются и валидируются."""
+    default_config = load_config(write_config(tmp_path, base_limits()))
+    assert default_config.limits.lead_digest_interval_min == 120
+    assert default_config.limits.lead_digest_max_items == 20
+
+    limits = base_limits() | {
+        "lead_digest_interval_min": 60,
+        "lead_digest_max_items": 5,
+    }
+    config = load_config(write_config(tmp_path, limits))
+    assert config.limits.lead_digest_interval_min == 60
+    assert config.limits.lead_digest_max_items == 5
+
+    with pytest.raises(ConfigError):
+        load_config(
+            write_config(
+                tmp_path,
+                base_limits() | {"lead_digest_interval_min": 0},
+            )
+        )
+
+
 @pytest.mark.parametrize(
     "limits",
     [

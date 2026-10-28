@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS ad_ai (
   verdict_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pending_alerts (
+  ad_id TEXT PRIMARY KEY,
+  query TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  queued_at TEXT NOT NULL,
+  sent_at TEXT
+);
 """
 
 
@@ -344,6 +352,53 @@ class Storage:
                     utc_now_iso(),
                 ),
             )
+
+    def queue_alert(self, ad_id: str, query: str, reason: str) -> None:
+        """Поставить объявление в очередь дайджеста."""
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO pending_alerts "
+                "(ad_id, query, reason, queued_at, sent_at) "
+                "VALUES (?, ?, ?, ?, NULL)",
+                (ad_id, query, reason, utc_now_iso()),
+            )
+
+    def take_pending(self, limit: int) -> list[dict[str, object]]:
+        """Взять до limit неотправленных лидов вместе с данными объявления."""
+        if limit <= 0:
+            return []
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT p.ad_id, p.query, p.reason, p.queued_at, "
+                "a.subject, a.price_byn, a.url "
+                "FROM pending_alerts p "
+                "LEFT JOIN ads a ON a.ad_id = p.ad_id "
+                "WHERE p.sent_at IS NULL "
+                "ORDER BY p.queued_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_digest_sent(self, ad_ids: list[str]) -> None:
+        """Пометить включённые в дайджест объявления отправленными."""
+        unique = list(dict.fromkeys(ad_ids))
+        if not unique:
+            return
+        placeholders = ",".join("?" for _ in unique)
+        with self._connection() as connection:
+            connection.execute(
+                f"UPDATE pending_alerts SET sent_at = ? "
+                f"WHERE sent_at IS NULL AND ad_id IN ({placeholders})",
+                (utc_now_iso(), *unique),
+            )
+
+    def count_pending(self) -> int:
+        """Сколько лидов ждёт дайджеста."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM pending_alerts WHERE sent_at IS NULL"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def get_meta(self, key: str) -> str | None:
         """Прочитать произвольное значение из meta."""

@@ -48,6 +48,9 @@ AI_HINT_RE = re.compile(
     r"серебр|925|875|лом|монет|ложк|вилк|цеп|кольц|серьг|браслет",
     re.IGNORECASE,
 )
+LEAD_DIGEST_CHECK_SECONDS = 60
+LEAD_DIGEST_LAST_KEY = "last_lead_digest_at"
+LEAD_DIGEST_MAX_CHARS = 3500
 
 
 @dataclass
@@ -385,43 +388,52 @@ class Scheduler:
                 allow_api=is_new,
             )
 
-            if (
-                ai is None
-                and self.config.limits.require_ai_for_leads
-                and not query.notify
-                and analysis is not None
-                and analysis.is_lead
-            ):
-                logger.info(
-                    "Лид без AI — пропуск ad_id=%s (fallback)",
-                    ad.ad_id,
-                )
-                continue
-
             if self.storage.is_instant_alerted(ad.ad_id):
                 continue
             if ai is not None and ai.verdict == "skip":
                 logger.info("AI: skip ad_id=%s", ad.ad_id)
                 continue
-            if ai is not None:
-                if not ai.is_silver:
-                    logger.info(
-                        "AI: серебро не подтверждено, но verdict=%s — отправляю "
-                        "как лид ad_id=%s",
-                        ai.verdict,
-                        ad.ad_id,
-                    )
-                should_send = True
+
+            instant = False
+            queue_reason: str | None = None
+            if analysis is not None and (
+                analysis.is_below_scrap or analysis.is_suspicious
+            ):
+                instant = True
+            elif ai is not None and ai.verdict == "look":
+                instant = True
+            elif ai is not None and query.notify and ai.is_silver:
+                instant = True
+            elif ai is not None and ai.verdict == "ask":
+                queue_reason = "ask"
+            elif ai is None:
+                if query.notify:
+                    instant = True
+                elif analysis is not None and analysis.is_lead:
+                    if self.config.limits.require_ai_for_leads:
+                        logger.info(
+                            "Лид без AI — пропуск ad_id=%s (fallback)",
+                            ad.ad_id,
+                        )
+                        continue
+                    queue_reason = "лид"
+                else:
+                    continue
             else:
-                should_send = (
-                    analysis is not None
-                    and (
-                        analysis.is_below_scrap
-                        or analysis.is_suspicious
-                        or analysis.is_lead
-                    )
-                ) or query.notify
-            if not should_send:
+                queue_reason = "ask"
+
+            if queue_reason is not None:
+                self.storage.queue_alert(ad.ad_id, query.q, queue_reason)
+                self.storage.mark_instant_alerted(ad.ad_id)
+                logger.info(
+                    "Лид в дайджест ad_id=%s, запрос «%s», причина=%s",
+                    ad.ad_id,
+                    query.q,
+                    queue_reason,
+                )
+                continue
+
+            if not instant:
                 continue
             if sent >= limit:
                 self.storage.mark_instant_alerted(ad.ad_id)
@@ -463,6 +475,104 @@ class Scheduler:
         self.storage.set_last_poll(query.q, utc_now_iso())
         await self._on_successful_poll(query.q)
         return PassResult(new=new_count, sent=sent)
+
+    def _digest_block(self, item: dict[str, object], index: int) -> str:
+        """Собрать один HTML-блок дайджеста."""
+        ad_id = str(item.get("ad_id") or "")
+        title = html.escape(
+            str(item.get("subject") or "Без названия")[:160], quote=False
+        )
+        price_byn = item.get("price_byn")
+        if isinstance(price_byn, int) and price_byn > 0:
+            price = f"{price_byn / 100:.2f}".replace(".", ",") + " BYN"
+        else:
+            price = "Цена: договорная"
+
+        reason_code = str(item.get("reason") or "лид")
+        analysis = self.storage.get_analysis(ad_id)
+        ai = self.storage.get_ai_verdict(ad_id)
+        if ai is not None and ai.reason:
+            notes = ai.reason
+        elif analysis is not None and analysis.note:
+            notes = analysis.note
+        else:
+            notes = "лид без AI"
+        if ai is not None and ai.question:
+            question = ai.question
+        elif analysis is not None and analysis.is_lead:
+            question = "Подскажите точный вес и есть ли клеймо?"
+        else:
+            question = "Уточните вес, пробу и клеймо."
+
+        url = html.escape(str(item.get("url") or ""), quote=False)
+        return (
+            f"{index}. {title} — {price}\n"
+            f"   🤖 {html.escape(notes.strip()[:200], quote=False)}\n"
+            f"   ❓ {html.escape(question.strip()[:200], quote=False)}\n"
+            f"   {url}"
+        )
+
+    async def send_lead_digest_if_due(self) -> bool:
+        """Отправить накопившиеся ask/лид-алерты, если интервал истёк."""
+        if not self.tracking or self.storage.count_pending() == 0:
+            return False
+
+        now = datetime.now(timezone.utc)
+        interval = timedelta(
+            minutes=self.config.limits.lead_digest_interval_min
+        )
+        last = self.storage.get_meta(LEAD_DIGEST_LAST_KEY)
+        baseline = self._started_at
+        if last:
+            try:
+                parsed = datetime.fromisoformat(last)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                baseline = parsed
+            except ValueError:
+                baseline = self._started_at
+        if now < baseline + interval:
+            return False
+
+        items = self.storage.take_pending(
+            self.config.limits.lead_digest_max_items
+        )
+        if not items:
+            return False
+
+        blocks: list[str] = []
+        included: list[str] = []
+        for item in items:
+            block = self._digest_block(item, len(included) + 1)
+            candidate = "\n\n".join([*blocks, block])
+            if len(candidate) + 40 > LEAD_DIGEST_MAX_CHARS:
+                break
+            blocks.append(block)
+            included.append(str(item.get("ad_id") or ""))
+        if not blocks:
+            return False
+
+        text = f"🗂 Дайджест лидов ({len(included)})\n\n" + "\n\n".join(blocks)
+        ok = await self.notifier.send_text(text)
+        if not ok:
+            logger.warning("Дайджест лидов не отправлен, повтор позже")
+            return False
+
+        self.storage.mark_digest_sent(included)
+        self.storage.set_meta(LEAD_DIGEST_LAST_KEY, now.isoformat())
+        logger.info("Дайджест лидов отправлен: %d", len(included))
+        return True
+
+    async def _digest_loop(self) -> None:
+        """Проверять очередь дайджеста раз в минуту."""
+        while True:
+            try:
+                await self.send_lead_digest_if_due()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Дайджест лидов: ошибка")
+            await asyncio.sleep(LEAD_DIGEST_CHECK_SECONDS)
 
     async def _notify_kufar_error(self, error: KufarError, query: str) -> None:
         """Запомнить ошибку Kufar и сообщить о ней не чаще раза в 30 минут."""
@@ -600,6 +710,7 @@ class Scheduler:
         tasks.append(asyncio.create_task(self._control_watcher(), name="control"))
         tasks.append(asyncio.create_task(self._status_writer(), name="status"))
         tasks.append(asyncio.create_task(self._stale_watchdog(), name="stale"))
+        tasks.append(asyncio.create_task(self._digest_loop(), name="digest"))
         logger.info("Планировщик запущен: задач %d", len(tasks))
         return tasks
 
